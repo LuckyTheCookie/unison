@@ -1,0 +1,16 @@
+.gradle/
+build/
+app/build/
+.kotlin/
+.idea/
+*.iml
+local.properties
+
+# Signature : ne jamais versionner
+keystore.properties
+*.jks
+*.keystore
+
+# Artefacts
+*.apk
+*.aab
