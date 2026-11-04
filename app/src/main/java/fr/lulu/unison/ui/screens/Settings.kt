@@ -25,6 +25,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearWavyProgressIndicator
@@ -60,6 +61,8 @@ fun SettingsScreen(
     profile: Profile,
     onStyle: (UiStyle) -> Unit,
     onEditProfile: () -> Unit,
+    update: fr.lulu.unison.update.UpdateState,
+    onCheckUpdate: () -> Unit,
     onClose: () -> Unit,
 ) {
     Column(
@@ -122,6 +125,28 @@ fun SettingsScreen(
                     Text("Unison ${BuildConfig.VERSION_NAME}", style = Type.Headline, color = Ink.Primary)
                     Text("Écoutez Deezer ensemble, sans serveur.", style = Type.Footnote, color = Ink.Secondary)
                 }
+            }
+        }
+
+        Section("MISES À JOUR")
+        val checking = update is fr.lulu.unison.update.UpdateState.Checking
+        GlassSurface(Modifier.fillMaxWidth(), shape = RoundedRectangle(26.dp), refraction = false) {
+            Row(Modifier.fillMaxWidth().pressable(enabled = !checking, onClick = onCheckUpdate).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.SystemUpdate, null, tint = Ink.Secondary)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Rechercher une mise à jour", style = Type.Headline, color = Ink.Primary)
+                    Text(
+                        when (update) {
+                            is fr.lulu.unison.update.UpdateState.Checking -> "Recherche en cours…"
+                            is fr.lulu.unison.update.UpdateState.UpToDate -> "Unison est à jour."
+                            is fr.lulu.unison.update.UpdateState.Available -> "La version ${update.release.version} est disponible."
+                            else -> "Télécharge et installe la dernière version depuis GitHub."
+                        },
+                        style = Type.Footnote, color = Ink.Secondary,
+                    )
+                }
+                if (checking) fr.lulu.unison.ui.components.LoadingSpinner(22.dp)
             }
         }
         Spacer(Modifier.height(32.dp))
