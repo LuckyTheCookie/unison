@@ -12,6 +12,7 @@ class AppGraph(app: Application) {
     val api = DeezerApi()
     val lyrics = fr.lulu.unison.lyrics.LyricsRepository(DeezerApi.defaultClient)
     val sessions = SessionManager(app, profiles, deezer)
+    val updates = fr.lulu.unison.update.UpdateManager(app, DeezerApi.defaultClient)
 }
 
 class UnisonApp : Application() {
