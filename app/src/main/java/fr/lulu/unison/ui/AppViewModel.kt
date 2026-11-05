@@ -45,6 +45,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val graph = (app as UnisonApp).graph
     val deezer = graph.deezer
     val sessions = graph.sessions
+    val updates = graph.updates
+    val updateState = updates.state
 
     val profile: StateFlow<Profile?> = graph.profiles.profile.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val active: StateFlow<SessionHandle?> = sessions.active
@@ -88,7 +90,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, LyricsUi.Idle)
 
+    init { updates.clean(); updates.check() }
+
     fun onResume() {
+        updates.resumeAfterPermission()
         _listenerGranted.value = UnisonNotificationListener.isGranted(getApplication())
         deezer.refresh()
     }
