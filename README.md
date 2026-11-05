@@ -43,6 +43,13 @@ A shared queue, synced lyrics, and Deezer playing in perfect harmony.
 - **Search** for tracks directly in the app.
 - **Deezer is never modified**: Unison drives it through its media session.
 
+### 🔄 Built-in updates
+- On launch, Unison looks for a new [GitHub release](../../releases). If there is one, a card offers **Download** or **Later**.
+- A progress bar while downloading, then Android installs the update.
+- **Verified before installing**: SHA-256 digest published by GitHub, same application, newer version. Android refuses a different signature anyway.
+- Asks only once for the "Install unknown apps" permission for Unison.
+- "Check for updates" button in the settings.
+
 ### 📲 App sharing
 - Send the APK to your friends from the session invite screen.
 
@@ -79,6 +86,7 @@ app/src/main/java/fr/lulu/unison/
 ├── lyrics/     lyrics providers and LRC parsing
 ├── share/      receiving shares from Deezer
 ├── apkshare/   sending the APK
+├── update/     updates from GitHub releases
 ├── data/       local profile (DataStore)
 ├── model/      shared models
 └── ui/         theme, components, Liquid Glass, screens
@@ -88,7 +96,7 @@ app/src/main/java/fr/lulu/unison/
 
 ## 📲 Installation
 
-Download the latest APK from the [**Releases**](../../releases/latest) page, then open it on your phone (allow installation from your browser if Android asks).
+Download the latest APK from the [**Releases**](../../releases/latest) page, then open it on your phone (allow installation from your browser if Android asks). After that, updates are handled from inside the app.
 
 **Requirements**
 - Android 13 or newer.
