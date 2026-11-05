@@ -75,6 +75,9 @@ import fr.lulu.unison.ui.screens.OnboardingScreen
 import fr.lulu.unison.ui.screens.ScannerScreen
 import fr.lulu.unison.ui.screens.SearchScreen
 import fr.lulu.unison.ui.screens.SessionScreen
+import fr.lulu.unison.ui.screens.UpdateCard
+import fr.lulu.unison.ui.screens.isActionable
+import fr.lulu.unison.update.UpdateState
 import fr.lulu.unison.ui.theme.Ink
 import fr.lulu.unison.ui.theme.Type
 import fr.lulu.unison.ui.theme.UnisonTheme
@@ -128,6 +131,9 @@ private fun AppRoot(vm: AppViewModel, pendingJoin: JoinInfo?, onJoinConsumed: ()
     val granted by vm.listenerGranted.collectAsState()
     val listenHere by vm.listenHere.collectAsState()
     var overlay by rememberSaveable { mutableStateOf(Overlay.None) }
+    val update by vm.updateState.collectAsState()
+    var updateDismissed by rememberSaveable { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.onResume() }
 
@@ -248,6 +254,7 @@ private fun AppRoot(vm: AppViewModel, pendingJoin: JoinInfo?, onJoinConsumed: ()
                     fr.lulu.unison.ui.screens.SettingsScreen(
                         style = theme, profile = p, onStyle = vm::setTheme,
                         onEditProfile = { overlay = Overlay.Profile },
+                        update = update, onCheckUpdate = { updateDismissed = false; vm.updates.check(manual = true) },
                         onClose = { overlay = Overlay.None },
                     )
                 }
@@ -265,6 +272,22 @@ private fun AppRoot(vm: AppViewModel, pendingJoin: JoinInfo?, onJoinConsumed: ()
             }
         }
         if (overlay == Overlay.Profile) BackHandler { overlay = Overlay.None }
+
+        // Mise à jour : jamais en pleine session, sauf si on l'a demandée depuis les réglages
+        AnimatedVisibility(
+            update.isActionable() && (!updateDismissed || update !is UpdateState.Available) && (session == null || overlay == Overlay.Settings),
+            enter = fadeIn(), exit = fadeOut(),
+        ) {
+            Backdropped(DefaultAmbient, null, dim = 0.5f) {
+                UpdateCard(
+                    state = update,
+                    onDownload = vm.updates::download,
+                    onGrantPermission = { context.startActivity(vm.updates.permissionIntent()) },
+                    onLater = { updateDismissed = true; vm.updates.dismiss() },
+                    onCancel = vm.updates::cancelDownload,
+                )
+            }
+        }
 
         // Connexion / création en cours, ou erreur
         AnimatedVisibility(busy !is Busy.Idle, enter = fadeIn(), exit = fadeOut()) {
