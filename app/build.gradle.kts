@@ -23,8 +23,8 @@ android {
         applicationId = "fr.lulu.unison"
         minSdk = 33
         targetSdk = 37
-        versionCode = 3
-        versionName = "1.1.0"
+        versionCode = 4
+        versionName = "1.2.0"
     }
 
     signingConfigs {

@@ -40,8 +40,10 @@ A shared queue, synced lyrics, and Deezer playing in perfect harmony.
 
 ### 🔗 Deezer integration
 - **Share from Deezer**: "Add to Unison" in a track's share menu.
-- **Search** for tracks directly in the app.
-- **Deezer is never modified**: Unison drives it through its media session.
+- **Search** for tracks, albums and playlists directly in the app.
+- **Whole albums and playlists**: share an album or playlist link to Unison, or tap "+" in the search, to queue every track (up to 100).
+- **Add to your Deezer playlist** (optional): with the Unison Morphe patch applied to Deezer, a button adds the playing track to a playlist you choose, or automatically for everything you listen to. Unison suggests the patch on the home screen and in the settings.
+- **Without the patch, Deezer is never modified**: Unison drives it through its media session.
 
 ### 🔄 Built-in updates
 - On launch, Unison looks for a new [GitHub release](../../releases). If there is one, a card offers **Download** or **Later**.
