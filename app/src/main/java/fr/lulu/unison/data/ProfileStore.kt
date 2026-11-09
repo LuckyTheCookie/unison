@@ -21,6 +21,24 @@ class ProfileStore(private val context: Context) {
     private val kName = stringPreferencesKey("name")
     private val kColor = intPreferencesKey("color")
     private val kTheme = stringPreferencesKey("theme")
+    private val kPlaylistId = stringPreferencesKey("bridge_playlist_id")
+    private val kPlaylistTitle = stringPreferencesKey("bridge_playlist_title")
+    private val kAutoAdd = androidx.datastore.preferences.core.booleanPreferencesKey("bridge_auto_add")
+    private val kHintDismissed = androidx.datastore.preferences.core.booleanPreferencesKey("bridge_hint_dismissed")
+
+    /** Playlist Deezer choisie pour « Ajouter à ma playlist » (id, titre). */
+    val bridgePlaylist: Flow<Pair<String, String>?> = context.store.data.map { p ->
+        val id = p[kPlaylistId]
+        if (id.isNullOrEmpty()) null else id to (p[kPlaylistTitle] ?: "")
+    }
+    val bridgeAutoAdd: Flow<Boolean> = context.store.data.map { it[kAutoAdd] ?: false }
+    val bridgeHintDismissed: Flow<Boolean> = context.store.data.map { it[kHintDismissed] ?: false }
+
+    suspend fun setBridgePlaylist(id: String, title: String) {
+        context.store.edit { it[kPlaylistId] = id; it[kPlaylistTitle] = title }
+    }
+    suspend fun setBridgeAutoAdd(on: Boolean) { context.store.edit { it[kAutoAdd] = on } }
+    suspend fun dismissBridgeHint() { context.store.edit { it[kHintDismissed] = true } }
 
     /** Design choisi dans les réglages (verre liquide par défaut). */
     val theme: Flow<fr.lulu.unison.ui.theme.UiStyle> = context.store.data.map { p ->

@@ -387,10 +387,14 @@ private fun NowPlaying(
 
         Spacer(Modifier.height(18.dp))
         AnimatedVisibility(item != null) {
-            GlassButton(onClick = onLyrics, style = GlassStyle.Regular, modifier = Modifier.padding(bottom = 12.dp)) {
-                Icon(Icons.Rounded.Lyrics, null, tint = Ink.Primary, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Paroles", style = Type.Callout, color = Ink.Primary)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                GlassButton(onClick = onLyrics, style = GlassStyle.Regular, modifier = Modifier.padding(bottom = 12.dp)) {
+                    Icon(Icons.Rounded.Lyrics, null, tint = Ink.Primary, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Paroles", style = Type.Callout, color = Ink.Primary)
+                }
+                var picking by remember { mutableStateOf(false) }
+                AddToPlaylistButton(Modifier.padding(bottom = 12.dp), picking) { picking = it }
             }
         }
         // Écoute locale + état de synchro

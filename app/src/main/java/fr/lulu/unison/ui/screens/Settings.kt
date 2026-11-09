@@ -104,6 +104,10 @@ fun SettingsScreen(
             style = Type.Footnote, color = Ink.Tertiary, modifier = Modifier.padding(top = 10.dp, start = 6.dp, end = 6.dp),
         )
 
+        Section("DEEZER")
+        val picking = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+        BridgeSettingsCard(picking.value) { picking.value = it }
+
         Section("PAROLES")
         GlassSurface(Modifier.fillMaxWidth(), shape = RoundedRectangle(26.dp), refraction = false) {
             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {

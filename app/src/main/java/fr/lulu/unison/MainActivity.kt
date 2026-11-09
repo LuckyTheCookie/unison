@@ -165,6 +165,20 @@ private fun AppRoot(vm: AppViewModel, pendingJoin: JoinInfo?, onJoinConsumed: ()
     val status = session?.status?.collectAsState()?.value
     val colors = rememberArtworkColors(snapshot?.anchor?.item?.track?.cover)
 
+    val bridgeState by vm.bridgeState.collectAsState()
+    val chosen by vm.chosenPlaylist.collectAsState()
+    val autoAdd by vm.autoAdd.collectAsState()
+    val hintDismissed by vm.hintDismissed.collectAsState()
+    val bridgeMessage by vm.bridgeMessage.collectAsState()
+    val playlists by vm.playlists.collectAsState()
+    val bridgeUi = fr.lulu.unison.ui.screens.BridgeUi(
+        state = bridgeState, chosen = chosen, autoAdd = autoAdd, hintDismissed = hintDismissed,
+        message = bridgeMessage, playlists = playlists,
+        onAddCurrent = vm::addCurrentToPlaylist, onLoadPlaylists = vm::loadPlaylists, onPick = vm::choosePlaylist,
+        onAutoAdd = vm::setAutoAdd, onDismissHint = vm::dismissBridgeHint, onOpenDeezer = { vm.deezer.openDeezer() },
+    )
+
+    androidx.compose.runtime.CompositionLocalProvider(fr.lulu.unison.ui.screens.LocalBridge provides bridgeUi) {
     Box(Modifier.fillMaxSize().background(Ink.Bg)) {
         val p = profile
         val screen = when {
@@ -217,8 +231,16 @@ private fun AppRoot(vm: AppViewModel, pendingJoin: JoinInfo?, onJoinConsumed: ()
             val searching by vm.searching.collectAsState()
             val err by vm.searchError.collectAsState()
             val added by vm.added.collectAsState()
+            val mode by vm.mode.collectAsState()
+            val collections by vm.collections.collectAsState()
+            val addedCollections by vm.addedCollections.collectAsState()
             Backdropped(colors, snapshot?.anchor?.item?.track?.cover, dim = 0.55f) {
-                SearchScreen(query, results, searching, err, added, vm::setQuery, { t, next -> vm.addTrack(t, next) }) { overlay = Overlay.None }
+                SearchScreen(
+                    query, results, searching, err, added, vm::setQuery, { t, next -> vm.addTrack(t, next) },
+                    mode = mode, collections = collections, addedCollections = addedCollections,
+                    onMode = vm::setMode, onAddCollection = vm::addCollection,
+                    onClose = { overlay = Overlay.None },
+                )
             }
         }
         AnimatedVisibility(
@@ -294,6 +316,7 @@ private fun AppRoot(vm: AppViewModel, pendingJoin: JoinInfo?, onJoinConsumed: ()
             Backdropped(DefaultAmbient, null, dim = 0.5f) { BusyCard(busy, onDismiss = vm::dismissBusy) }
         }
     }
+    } // CompositionLocalProvider
 }
 
 /** Fond ambiant + backdrop pour le verre des écrans qui n'en ont pas déjà. */

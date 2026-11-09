@@ -82,6 +82,7 @@ fun HomeScreen(
         Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
     ) {
         Spacer(Modifier.height(12.dp))
+        BridgeHint(Modifier.padding(bottom = 14.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.pressable(onClick = onEditProfile)) {
                 Avatar(Member(profile.deviceId, profile.name, profile.color), 44.dp)

@@ -10,6 +10,7 @@ class AppGraph(app: Application) {
     val profiles = ProfileStore(app)
     val deezer = DeezerController(app)
     val api = DeezerApi()
+    val bridge = fr.lulu.unison.deezer.DeezerBridge(app)
     val lyrics = fr.lulu.unison.lyrics.LyricsRepository(DeezerApi.defaultClient)
     val sessions = SessionManager(app, profiles, deezer)
     val updates = fr.lulu.unison.update.UpdateManager(app, DeezerApi.defaultClient)
