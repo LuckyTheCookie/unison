@@ -12,6 +12,10 @@ sealed interface Cmd {
     @Serializable @SerialName("add")
     data class AddTrack(val track: Track, val playNext: Boolean = false) : Cmd
 
+    /** Album ou playlist entière ; à partir de la version 1.2, les anciens hôtes ignorent la commande. */
+    @Serializable @SerialName("addMany")
+    data class AddTracks(val tracks: List<Track>, val playNext: Boolean = false) : Cmd
+
     @Serializable @SerialName("remove")
     data class Remove(val uid: String) : Cmd
 

@@ -24,6 +24,18 @@ class SessionLogic(
             }
         }
 
+        is Cmd.AddTracks -> {
+            val items = cmd.tracks.take(MAX_BATCH).map { QueueItem(newUid(), it, by) }
+            if (items.isEmpty()) s
+            else if (s.anchor.item == null) {
+                // Rien ne joue : le premier titre démarre, les suivants forment la file (en tête si « ensuite »).
+                val rest = items.drop(1)
+                s.copy(anchor = start(items.first()), queue = if (cmd.playNext) rest + s.queue else s.queue + rest).bump()
+            } else {
+                s.copy(queue = if (cmd.playNext) items + s.queue else s.queue + items).bump()
+            }
+        }
+
         is Cmd.Remove -> {
             if (s.queue.none { it.uid == cmd.uid }) s
             else s.copy(queue = s.queue.filterNot { it.uid == cmd.uid }).bump()
@@ -110,6 +122,7 @@ class SessionLogic(
 
     companion object {
         const val MAX_HISTORY = 25
+        const val MAX_BATCH = 100
         const val START_DELAY_MS = 3_000L
     }
 }

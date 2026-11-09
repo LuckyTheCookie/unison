@@ -46,7 +46,6 @@ import com.kyant.backdrop.backdrops.emptyBackdrop
 import com.kyant.shapes.RoundedRectangle
 import fr.lulu.unison.MainActivity
 import fr.lulu.unison.UnisonApp
-import fr.lulu.unison.model.Track
 import fr.lulu.unison.session.Cmd
 import fr.lulu.unison.ui.components.Artwork
 import fr.lulu.unison.ui.components.UnisonLogo
@@ -63,8 +62,8 @@ import kotlinx.coroutines.delay
 class ShareReceiverActivity : ComponentActivity() {
     private sealed interface UiState {
         data object Resolving : UiState
-        data class Added(val track: Track, val sessionLabel: String) : UiState
-        data class NoSession(val track: Track?) : UiState
+        data class Added(val title: String, val cover: String, val count: Int, val sessionLabel: String) : UiState
+        data class NoSession(val cover: String?) : UiState
         data class Error(val message: String) : UiState
     }
 
@@ -80,12 +79,14 @@ class ShareReceiverActivity : ComponentActivity() {
                 var visible by remember { mutableStateOf(true) }
                 LaunchedEffect(Unit) {
                     state = try {
-                        val track = graph.api.resolveShared(text)
+                        val shared = graph.api.resolveSharedItems(text)
+                        val cover = shared.tracks.first().coverSmall
                         val session = graph.sessions.active.value
-                        if (session == null) UiState.NoSession(track) else {
-                            session.send(Cmd.AddTrack(track))
+                        if (session == null) UiState.NoSession(cover) else {
+                            if (shared.tracks.size == 1) session.send(Cmd.AddTrack(shared.tracks.first()))
+                            else session.send(Cmd.AddTracks(shared.tracks))
                             val label = if (session.isHost) "ta session" else "la session de ${session.joinInfo.hostName}"
-                            UiState.Added(track, label)
+                            UiState.Added(shared.label, cover, shared.tracks.size, label)
                         }
                     } catch (t: Throwable) {
                         UiState.Error(t.message ?: "Lien non reconnu")
@@ -134,17 +135,17 @@ class ShareReceiverActivity : ComponentActivity() {
                     fr.lulu.unison.ui.components.LoadingSpinner(24.dp)
                 }
                 is UiState.Added -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Artwork(s.track.coverSmall, 56.dp, 14.dp)
+                    Artwork(s.cover, 56.dp, 14.dp)
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(s.track.title, style = Type.Headline, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("Ajouté à ${s.sessionLabel}", style = Type.Footnote, color = Ink.Secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(s.title, style = Type.Headline, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(if (s.count > 1) "${s.count} titres ajoutés à ${s.sessionLabel}" else "Ajouté à ${s.sessionLabel}", style = Type.Footnote, color = Ink.Secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Icon(Icons.Rounded.CheckCircle, null, tint = Color(0xFF4CD9A0), modifier = Modifier.size(30.dp))
                 }
                 is UiState.NoSession -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Artwork(s.track?.coverSmall, 56.dp, 14.dp)
+                        Artwork(s.cover, 56.dp, 14.dp)
                         Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f)) {
                             Text("Aucune session en cours", style = Type.Headline, color = Ink.Primary)

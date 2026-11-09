@@ -9,6 +9,18 @@ object DeezerLinkParser {
     /** ID du titre s'il apparaît directement dans le texte. */
     fun directTrackId(text: String): Long? = trackRegex.find(text)?.groupValues?.get(1)?.toLongOrNull()
 
+    enum class Kind(val path: String) { Album("album"), Playlist("playlist") }
+
+    private val collectionRegex =
+        Regex("""(?:deezer\.com|deezer://www\.deezer\.com)/(?:[a-z]{2}(?:-[a-z]{2})?/)?(album|playlist)/(\d+)""", RegexOption.IGNORE_CASE)
+
+    /** Album ou playlist désignés directement dans le texte (type + identifiant). */
+    fun directCollection(text: String): Pair<Kind, Long>? {
+        val m = collectionRegex.find(text) ?: return null
+        val kind = if (m.groupValues[1].equals("album", ignoreCase = true)) Kind.Album else Kind.Playlist
+        return m.groupValues[2].toLongOrNull()?.let { kind to it }
+    }
+
     /** Premier lien Deezer trouvé dans le texte (court ou complet). */
     fun firstDeezerUrl(text: String): String? = urlRegex.findAll(text).map { it.value.trimEnd('.', ',', ')', '!') }
         .firstOrNull { url -> isShortLink(url) || url.contains("deezer.com", ignoreCase = true) }

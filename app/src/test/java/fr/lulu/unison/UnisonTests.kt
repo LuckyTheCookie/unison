@@ -37,6 +37,14 @@ class LinkParserTest {
         assertFalse(DeezerLinkParser.isShortLink("https://example.com/track/1"))
     }
 
+    @Test fun collections() {
+        assertEquals(DeezerLinkParser.Kind.Album to 302127L, DeezerLinkParser.directCollection("https://www.deezer.com/fr/album/302127?utm=x"))
+        assertEquals(DeezerLinkParser.Kind.Playlist to 123L, DeezerLinkParser.directCollection("Écoute https://www.deezer.com/playlist/123"))
+        assertEquals(DeezerLinkParser.Kind.Album to 9L, DeezerLinkParser.directCollection("deezer://www.deezer.com/album/9"))
+        assertNull(DeezerLinkParser.directCollection("https://www.deezer.com/fr/track/3135556"))
+        assertNull(DeezerLinkParser.directCollection("https://www.deezer.com/artist/27"))
+    }
+
     @Test fun nonTrack() {
         assertTrue(DeezerLinkParser.isNonTrackDeezerUrl("https://www.deezer.com/fr/playlist/123"))
         assertFalse(DeezerLinkParser.isNonTrackDeezerUrl("https://www.deezer.com/fr/track/123"))
@@ -84,6 +92,34 @@ class LogicTest {
         assertEquals(listOf(3L, 4L, 2L), s.queue.map { it.track.id })
         s = logic.apply(s, Cmd.Remove(s.queue[1].uid), "h")
         assertEquals(listOf(3L, 2L), s.queue.map { it.track.id })
+    }
+
+    @Test fun addManyOnEmptyStartsFirstThenQueues() {
+        val s = logic.apply(base, Cmd.AddTracks(listOf(t(1), t(2), t(3))), "h")
+        assertEquals(1L, s.anchor.item?.track?.id)
+        assertTrue(s.anchor.playing)
+        assertEquals(listOf(2L, 3L), s.queue.map { it.track.id })
+    }
+
+    @Test fun addManyAppendsOrPlaysNext() {
+        var s = logic.apply(base, Cmd.AddTrack(t(1)), "h")
+        s = logic.apply(s, Cmd.AddTrack(t(2)), "h")
+        s = logic.apply(s, Cmd.AddTracks(listOf(t(3), t(4))), "g")
+        assertEquals(listOf(2L, 3L, 4L), s.queue.map { it.track.id })
+        s = logic.apply(s, Cmd.AddTracks(listOf(t(5), t(6)), playNext = true), "g")
+        assertEquals(listOf(5L, 6L, 2L, 3L, 4L), s.queue.map { it.track.id })
+        assertEquals("g", s.queue.first().addedBy)
+    }
+
+    @Test fun addManyIsCappedAndIgnoresEmpty() {
+        assertEquals(base, logic.apply(base, Cmd.AddTracks(emptyList()), "h"))
+        val s = logic.apply(base, Cmd.AddTracks((1L..300L).map { t(it) }), "h")
+        assertEquals(SessionLogic.MAX_BATCH - 1, s.queue.size)
+    }
+
+    @Test fun addManyRoundTrips() {
+        val msg = Msg.Command(Cmd.AddTracks(listOf(t(1), t(2)), playNext = true))
+        assertEquals(msg, decodeMsg(msg.encode()))
     }
 
     @Test fun advanceAtEnd() {
