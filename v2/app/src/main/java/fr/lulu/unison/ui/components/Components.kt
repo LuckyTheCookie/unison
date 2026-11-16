@@ -1,0 +1,348 @@
+package fr.lulu.unison.ui.components
+
+import androidx.annotation.DrawableRes
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
+import fr.lulu.unison.R
+import fr.lulu.unison.model.Track
+import fr.lulu.unison.ui.theme.Ink
+import fr.lulu.unison.ui.theme.Radius
+import fr.lulu.unison.ui.theme.Type
+import fr.lulu.unison.youtube.YtParser
+
+fun formatTime(ms: Long): String {
+    val total = (ms.coerceAtLeast(0) / 1000)
+    val h = total / 3600; val m = (total % 3600) / 60; val s = total % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
+/** Icône Mingcute (ressource vectorielle), teintée. */
+@Composable
+fun Glyph(@DrawableRes res: Int, modifier: Modifier = Modifier, tint: Color = Ink.Primary, size: Dp = 24.dp) {
+    Icon(painterResource(res), contentDescription = null, modifier = modifier.size(size), tint = tint)
+}
+
+/** Retour tactile sobre : l'élément se contracte légèrement sous le doigt, sans onde Material. */
+fun Modifier.pressable(
+    enabled: Boolean = true,
+    scale: Float = 0.97f,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
+): Modifier = composed {
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val s by animateFloatAsState(if (pressed) scale else 1f, spring(dampingRatio = 0.7f, stiffness = 520f), label = "press")
+    this
+        .graphicsLayer { scaleX = s; scaleY = s; alpha = if (enabled) 1f else 0.4f }
+        .combinedClickable(interactionSource = source, indication = null, enabled = enabled, onLongClick = onLongClick, onClick = onClick)
+}
+
+@Composable
+fun IconBtn(
+    @DrawableRes icon: Int,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: Dp = 44.dp,
+    iconSize: Dp = 24.dp,
+    tint: Color = Ink.Primary,
+    background: Color = Color.Transparent,
+    enabled: Boolean = true,
+) {
+    Box(
+        modifier.size(size).clip(CircleShape).background(background).pressable(enabled, scale = 0.88f, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(painterResource(icon), contentDescription = label, modifier = Modifier.size(iconSize), tint = tint)
+    }
+}
+
+/** Pochette ; les images Google sont demandées à la bonne taille. */
+@Composable
+fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, shape: Shape = Radius.Item) {
+    val px = when {
+        size <= 64.dp -> 120
+        size <= 180.dp -> 360
+        else -> 720
+    }
+    Box(modifier.size(size).clip(shape).background(Ink.Fill), contentAlignment = Alignment.Center) {
+        if (url.isNullOrBlank()) Glyph(R.drawable.ic_music_fill, tint = Ink.Tertiary, size = size * 0.4f)
+        else AsyncImage(
+            model = YtParser.resize(url, px),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+@Composable
+fun ExplicitBadge() {
+    Box(
+        Modifier.padding(end = 6.dp).size(15.dp).clip(RoundedCornerShape(4.dp)).background(Ink.FillStrong),
+        contentAlignment = Alignment.Center,
+    ) { Text("E", style = Type.Caption.copy(fontSize = 9.sp, lineHeight = 10.sp), color = Ink.Secondary) }
+}
+
+/** Barres animées sur le titre en cours de lecture. */
+@Composable
+fun PlayingBars(active: Boolean, modifier: Modifier = Modifier, color: Color = Ink.Primary) {
+    val t = rememberInfiniteTransition(label = "bars")
+    Row(modifier.size(18.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.Bottom) {
+        listOf(520, 380, 640).forEach { period ->
+            val h by t.animateFloat(0.25f, 1f, infiniteRepeatable(tween(period), RepeatMode.Reverse), label = "bar")
+            Box(Modifier.weight(1f).fillMaxHeight(if (active) h else 0.3f).clip(RoundedCornerShape(1.dp)).background(color))
+        }
+    }
+}
+
+/** Ligne de titre : 64 dp, pochette, titre et artiste, durée, menu. */
+@Composable
+fun TrackRow(
+    track: Track,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    index: Int? = null,
+    showCover: Boolean = true,
+    current: Boolean = false,
+    playing: Boolean = false,
+    subtitle: String = track.artist,
+    onMore: (() -> Unit)? = null,
+    trailing: @Composable (RowScope.() -> Unit)? = null,
+) {
+    Row(
+        modifier.fillMaxWidth().height(64.dp).pressable(scale = 0.985f, onLongClick = onMore, onClick = onClick).padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (index != null) {
+            Box(Modifier.width(34.dp), contentAlignment = Alignment.Center) {
+                if (current) PlayingBars(playing) else Text("$index", style = Type.Label, color = Ink.Tertiary)
+            }
+        }
+        if (showCover) {
+            Box(contentAlignment = Alignment.Center) {
+                Cover(track.cover, 46.dp, shape = RoundedCornerShape(8.dp))
+                if (current && index == null) {
+                    Box(Modifier.size(46.dp).clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
+                        PlayingBars(playing)
+                    }
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(track.title, style = Type.Row, color = if (current) Ink.Accent else Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (track.explicit) ExplicitBadge()
+                Text(subtitle, style = Type.Body, color = Ink.Tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (trailing != null) trailing()
+        else {
+            if (track.durationMs > 0) Text(formatTime(track.durationMs), style = Type.Time, color = Ink.Tertiary, modifier = Modifier.padding(start = 10.dp))
+            if (onMore != null) IconBtn(R.drawable.ic_more_line, "Plus d'options", onMore, size = 40.dp, iconSize = 20.dp, tint = Ink.Secondary)
+        }
+    }
+}
+
+/** Panneau de verre : remplissage blanc à faible opacité, liseré discret. */
+@Composable
+fun GlassPanel(
+    modifier: Modifier = Modifier,
+    shape: Shape = Radius.Panel,
+    padding: PaddingValues = PaddingValues(vertical = 6.dp),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier.clip(shape).background(Ink.Fill).border(0.5.dp, Ink.Hairline, shape).padding(padding),
+        content = content,
+    )
+}
+
+@Composable
+fun Chip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier.height(36.dp).clip(Radius.Control)
+            .background(if (selected) Ink.ButtonBg else Ink.Fill)
+            .pressable(onClick = onClick).padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) { Text(text, style = Type.Label, color = if (selected) Ink.ButtonText else Ink.Primary) }
+}
+
+/** Petite étiquette d'information (année, nombre de titres…). */
+@Composable
+fun MetaChip(text: String, @DrawableRes icon: Int? = null) {
+    Row(
+        Modifier.clip(RoundedCornerShape(9.dp)).background(Ink.Fill).padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) { Glyph(icon, tint = Ink.Secondary, size = 14.dp); Spacer(Modifier.width(6.dp)) }
+        Text(text, style = Type.Caption, color = Ink.Secondary, maxLines = 1)
+    }
+}
+
+@Composable
+fun PrimaryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    @DrawableRes icon: Int? = null,
+    enabled: Boolean = true,
+) {
+    Row(
+        modifier.heightIn(min = 46.dp).clip(Radius.Control).background(Ink.ButtonBg).pressable(enabled, onClick = onClick).padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center,
+    ) {
+        if (icon != null) { Glyph(icon, tint = Ink.ButtonText, size = 20.dp); Spacer(Modifier.width(8.dp)) }
+        Text(text, style = Type.Button, color = Ink.ButtonText, maxLines = 1)
+    }
+}
+
+@Composable
+fun GlassButton(
+    text: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    @DrawableRes icon: Int? = null,
+    tint: Color = Ink.Primary,
+    enabled: Boolean = true,
+) {
+    Row(
+        modifier.heightIn(min = 46.dp).clip(Radius.Control).background(Ink.FillHover).pressable(enabled, onClick = onClick)
+            .padding(horizontal = if (text == null) 13.dp else 18.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center,
+    ) {
+        if (icon != null) Glyph(icon, tint = tint, size = 20.dp)
+        if (icon != null && text != null) Spacer(Modifier.width(8.dp))
+        if (text != null) Text(text, style = Type.Button, color = tint, maxLines = 1)
+    }
+}
+
+@Composable
+fun SectionHeader(title: String, modifier: Modifier = Modifier, action: String? = null, onAction: (() -> Unit)? = null) {
+    Row(modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 26.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, style = Type.Section, color = Ink.Primary, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (action != null && onAction != null) {
+            Text(
+                action, style = Type.Label, color = Ink.Secondary,
+                modifier = Modifier.clip(Radius.Control).clickable(role = Role.Button, onClick = onAction).padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+fun Spinner(modifier: Modifier = Modifier, size: Dp = 26.dp, color: Color = Ink.Secondary) {
+    val t = rememberInfiniteTransition(label = "spin")
+    val angle by t.animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = androidx.compose.animation.core.LinearEasing)), label = "a")
+    androidx.compose.foundation.Canvas(modifier.size(size).graphicsLayer { rotationZ = angle }) {
+        drawArc(
+            color = color, startAngle = 0f, sweepAngle = 270f, useCenter = false,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = this.size.minDimension * 0.11f, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+        )
+    }
+}
+
+@Composable
+fun CenterBox(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) =
+    Box(modifier.fillMaxWidth().padding(vertical = 56.dp), contentAlignment = Alignment.Center, content = content)
+
+/** État vide ou erreur, avec une action facultative. */
+@Composable
+fun Notice(
+    title: String,
+    modifier: Modifier = Modifier,
+    detail: String? = null,
+    @DrawableRes icon: Int? = null,
+    action: String? = null,
+    onAction: (() -> Unit)? = null,
+) {
+    Column(modifier.fillMaxWidth().padding(horizontal = 36.dp, vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (icon != null) { Glyph(icon, tint = Ink.Tertiary, size = 40.dp); Spacer(Modifier.height(14.dp)) }
+        Text(title, style = Type.Title, color = Ink.Primary, textAlign = TextAlign.Center)
+        if (detail != null) {
+            Spacer(Modifier.height(6.dp))
+            Text(detail, style = Type.Body, color = Ink.Secondary, textAlign = TextAlign.Center)
+        }
+        if (action != null && onAction != null) {
+            Spacer(Modifier.height(18.dp))
+            GlassButton(action, onAction)
+        }
+    }
+}
+
+/** En-tête d'écran avec bouton retour. */
+@Composable
+fun TopBar(title: String, onBack: (() -> Unit)?, modifier: Modifier = Modifier, actions: @Composable RowScope.() -> Unit = {}) {
+    Row(modifier.fillMaxWidth().height(56.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (onBack != null) IconBtn(R.drawable.ic_left_line, "Retour", onBack)
+        else Spacer(Modifier.width(14.dp))
+        Text(title, style = Type.Title, color = Ink.Primary, modifier = Modifier.weight(1f).padding(horizontal = 4.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        actions()
+    }
+}
+
+/** Pastille d'un membre de la session : initiale sur sa couleur. */
+@Composable
+fun Avatar(name: String, color: Int, size: Dp = 36.dp, modifier: Modifier = Modifier) {
+    val bg = Color(color)
+    val dark = (0.299f * bg.red + 0.587f * bg.green + 0.114f * bg.blue) > 0.6f
+    Box(modifier.size(size).clip(CircleShape).background(bg), contentAlignment = Alignment.Center) {
+        Text(
+            name.trim().take(1).uppercase().ifEmpty { "?" },
+            style = Type.Button.copy(fontSize = (size.value * 0.42f).sp),
+            color = if (dark) Color.Black else Color.White,
+        )
+    }
+}

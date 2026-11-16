@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
 }
 
 // La clé de signature est celle de la v1, rangée à la racine du dépôt (jamais versionnée).
@@ -64,6 +65,7 @@ android {
         unitTests.all {
             // Tests « en vrai » contre YouTube Music : UNISON_LIVE=1 ./gradlew testDebugUnitTest --tests '*Live*'
             it.environment("UNISON_LIVE", System.getenv("UNISON_LIVE") ?: "")
+            it.environment("UNISON_DUMP", System.getenv("UNISON_DUMP") ?: "")
             it.testLogging.showStandardStreams = true
         }
     }
@@ -82,6 +84,12 @@ android {
                 "META-INF/*.kotlin_module",
             )
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        optIn.add("androidx.media3.common.util.UnstableApi")
     }
 }
 
@@ -105,6 +113,10 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
     implementation(libs.media3.datasource.okhttp)
+
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
 
     implementation(libs.innertubex)
     implementation(libs.ktor.client.okhttp)
