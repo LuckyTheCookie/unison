@@ -34,6 +34,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,6 +67,8 @@ fun SearchScreen(vm: AppViewModel) {
     val ui by vm.search.collectAsState()
     val snap by vm.snapshot.collectAsState()
     val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    fun submit(q: String? = null) { if (q != null) vm.submitSearch(q) else vm.submitSearch(); focus.clearFocus(); keyboard?.hide() }
     val requester = remember { FocusRequester() }
     LaunchedEffect(Unit) { if (ui.query.isEmpty()) runCatching { requester.requestFocus() } }
 
@@ -86,7 +89,7 @@ fun SearchScreen(vm: AppViewModel) {
                     textStyle = Type.Row.copy(color = Ink.Primary),
                     cursorBrush = SolidColor(Ink.Accent),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search, capitalization = KeyboardCapitalization.None),
-                    keyboardActions = KeyboardActions(onSearch = { vm.submitSearch(); focus.clearFocus() }),
+                    keyboardActions = KeyboardActions(onSearch = { submit() }),
                     modifier = Modifier.fillMaxWidth().focusRequester(requester),
                 )
             }
@@ -102,7 +105,7 @@ fun SearchScreen(vm: AppViewModel) {
             !ui.submitted -> LazyColumn(contentPadding = PaddingValues(bottom = bottom)) {
                 items(listOf(ui.query) + ui.suggestions.filter { it != ui.query }) { s ->
                     Row(
-                        Modifier.fillMaxWidth().height(50.dp).pressable(scale = 0.99f) { vm.submitSearch(s); focus.clearFocus() }.padding(horizontal = 24.dp),
+                        Modifier.fillMaxWidth().height(50.dp).pressable(scale = 0.99f) { submit(s) }.padding(horizontal = 24.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Glyph(R.drawable.ic_search_line, tint = Ink.Tertiary, size = 18.dp)

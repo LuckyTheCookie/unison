@@ -118,7 +118,7 @@ fun TogetherScreen(vm: AppViewModel, onShare: (TransportKind) -> Unit, onScan: (
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    Column(Modifier.fillMaxSize().background(Ink.Sheet).statusBarsPadding().navigationBarsPadding()) {
+    Column(Modifier.fillMaxSize().background(Ink.Surface).statusBarsPadding().navigationBarsPadding()) {
         TopBar("Écouter ensemble", onBack = onClose)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
             val info = join
@@ -211,9 +211,9 @@ fun TogetherScreen(vm: AppViewModel, onShare: (TransportKind) -> Unit, onScan: (
 
                     Spacer(Modifier.height(22.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (vm.isHost) GlassButton("Envoyer Unison", { scope.launch { ApkSharer.share(context) } }, Modifier.weight(1f), icon = R.drawable.ic_share_line)
+                        if (vm.isHost) GlassButton("Partager l'app", { scope.launch { ApkSharer.share(context) } }, Modifier.weight(1f), icon = R.drawable.ic_share_line)
                         GlassButton(
-                            if (vm.isHost) "Fermer la session" else "Quitter la session", { vm.leave() }, Modifier.weight(1f),
+                            if (vm.isHost) "Fermer" else "Quitter", { vm.leave() }, Modifier.weight(1f),
                             icon = R.drawable.ic_exit_line, tint = Ink.Danger,
                         )
                     }

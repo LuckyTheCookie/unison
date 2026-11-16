@@ -4,7 +4,6 @@
 -keep class fr.lulu.unison.model.** { *; }
 -keep class fr.lulu.unison.session.Msg* { *; }
 -keep class fr.lulu.unison.session.Cmd* { *; }
--keepclassmembers class fr.lulu.unison.deezer.DeezerApi$* { *; }
 # Bibliothèques Google (ML Kit, Nearby, Play Services) : R8 casse leur code interne
 -keep class com.google.mlkit.** { *; }
 -keep class com.google.android.gms.** { *; }
@@ -17,3 +16,10 @@
 -keep class okhttp3.** { *; }
 -dontwarn okhttp3.**
 -keep class fr.lulu.unison.lyrics.** { *; }
+# Moteur YouTube Music (InnerTubeX) : modèles sérialisés et solveur de signature
+-keep class com.metrolist.innertubex.** { *; }
+-keep class com.metrolist.quackjs.** { *; }
+-dontwarn com.metrolist.**
+-dontwarn io.ktor.**
+-dontwarn org.brotli.**
+-dontwarn java.lang.management.**

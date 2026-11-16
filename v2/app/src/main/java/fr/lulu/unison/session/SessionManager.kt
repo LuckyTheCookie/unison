@@ -121,6 +121,8 @@ class SessionManager(
         val (host, port) = transport.start()
         val info = JoinInfo(sessionId, randomToken(16), p.name, if (kind == TransportKind.NEARBY) kind else TransportKind.LAN, host, port)
         local.share(transport, info)
+        // En développement seulement : permet de rejoindre depuis un émulateur sans scanner le QR code.
+        if (fr.lulu.unison.BuildConfig.DEBUG) Log.d(TAG, "join=${info.toUri()}")
         info
     }
 

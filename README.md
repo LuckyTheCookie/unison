@@ -3,7 +3,7 @@
 # 🎧 Unison
 
 **Listen to the same music, at the same instant, on several phones.**
-A shared queue, synced lyrics, and Deezer playing in perfect harmony.
+A YouTube Music player with a shared queue and synced lyrics.
 
 ![Android](https://img.shields.io/badge/Android-13%2B-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)
@@ -16,83 +16,48 @@ A shared queue, synced lyrics, and Deezer playing in perfect harmony.
 
 ## ✨ Features
 
-### 🎶 Shared listening
-- **One-scan sessions**: the host shows a QR code (or a `unison://join` link), guests scan it and join.
-- **Collaborative queue**: anyone can add, reorder, remove, skip or go back.
-- **Millisecond-level sync**: NTP-style clock offset estimation, a shared playback anchor and continuous drift correction.
-- **Scheduled start**: every track starts 3 s after it is requested, giving every phone time to load it and avoiding stutter at the beginning of a song.
-- **Automatic reconnection** when the network drops.
+### 🎵 A full music player
+- **YouTube Music inside the app**: search tracks, albums, artists and playlists, browse the home feed and charts. No account needed.
+- **Its own player** (Media3 ExoPlayer): notification, lock screen, headset and Bluetooth controls, background playback, on-device audio cache.
+- **Queue**: play next, add to queue, reorder, shuffle, repeat, and an automatic radio that keeps the music going.
+- **Library on the phone**: favourites, playlists, saved albums and listening history.
+- **Synced lyrics** from [LRCLIB](https://lrclib.net), then NetEase. Tap a line to jump to it.
 
-### 📡 Two connection modes
-| Mode | Technology | When to use it |
-|---|---|---|
-| **Wi-Fi** | WebSocket on the local network, address shared through the QR code | Everyone is on the same Wi-Fi |
-| **No Wi-Fi** | Nearby Connections (Bluetooth + Wi-Fi Direct) | In the car, outdoors, anywhere without a network |
+### 🎧 Listen together
+- **Open your queue to friends** without stopping the music: show a QR code, they scan it and join.
+- **Shared queue**: anyone can add, reorder, remove, skip or pause.
+- **Millisecond-level sync**: NTP-style clock offset, a shared playback anchor, and drift corrected by tiny speed changes (a seek only for large gaps).
+- **Two connection modes**: same Wi-Fi (WebSocket), or no Wi-Fi at all with Nearby Connections (Bluetooth + Wi-Fi Direct).
+- Leaving a session gives you your own queue back.
 
-### 🎤 Synced lyrics
-- The active line is highlighted and scrolls automatically, shared with the whole session.
-- Animated dots during instrumental passages.
-- Free sources, no account needed: [LRCLIB](https://lrclib.net), then NetEase. Plain lyrics as a fallback.
-
-### 🎨 Two themes
-- **Liquid Glass**: translucent surfaces and background blur.
-- **Material 3 Expressive**: Material You colors taken from the wallpaper, shapes that morph on touch, a "cookie" play button and a wavy progress bar.
-
-### 🔗 Deezer integration
-- **Share from Deezer**: "Add to Unison" in a track's share menu.
-- **Search** for tracks, albums and playlists directly in the app.
-- **Whole albums and playlists**: share an album or playlist link to Unison, or tap "+" in the search, to queue every track (up to 100).
-- **Add to your Deezer playlist** (optional): with the [Unison Morphe patch](https://github.com/LuckyTheCookie/unison-morphe-patches) applied to Deezer, a button adds the playing track to a playlist you choose, or automatically for everything you listen to. Unison suggests the patch on the home screen and in the settings.
-- **Without the patch, Deezer is never modified**: Unison drives it through its media session.
+### 🎨 Design
+- The artwork colours the screen through an animated background, a Compose/AGSL port of [Kawarp](https://github.com/better-lyrics/kawarp).
+- Neutral glass surfaces, calm motion, Inter and Montserrat typefaces, MingCute icons. Inspired by [Liner](https://github.com/tryliner/desktop).
 
 ### 🔄 Built-in updates
-- On launch, Unison looks for a new [GitHub release](../../releases). If there is one, a card offers **Download** or **Later**.
-- A progress bar while downloading, then Android installs the update.
-- **Verified before installing**: SHA-256 digest published by GitHub, same application, newer version. Android refuses a different signature anyway.
-- Asks only once for the "Install unknown apps" permission for Unison.
-- "Check for updates" button in the settings.
-
-### 📲 App sharing
-- Send the APK to your friends from the session invite screen.
+- On launch, Unison looks for a new [GitHub release](../../releases) and offers to install it (SHA-256 verified).
 
 ---
 
 ## 🧠 How it works
 
 ```
-        Host (source of truth)                         Guests
+   Phone that owns the queue (alone, or host)            Guests
    ┌────────────────────────────┐              ┌─────────────────────┐
    │ SessionLogic               │    state     │ ClientSession       │
    │  queue · history · anchor  │ ───────────▶ │  mirrors the state  │
    │                            │ ◀─────────── │  sends its requests │
    └─────────────┬──────────────┘   commands   └──────────┬──────────┘
-                 │                                        │
                  ▼                                        ▼
-          PlaybackSync  ──▶ DeezerController ──▶ Deezer media session
-          (anchor + clock)    (play · seek · pause)
+        PlaybackController ──▶ ExoPlayer ◀── stream resolved from YouTube Music
 ```
 
-- **Playback anchor** (`PlayAnchor`): a track, a position and the host time at which that position was true. Every phone derives the expected position at any instant from it.
-- **Clock** (`ClockSync`): regular pings; the sample with the shortest round trip is kept to estimate the offset from the host.
-- **Correction** (`PlaybackSync`): every 2 s, Deezer's actual position is compared with the expected one. A seek only happens after two consecutive out-of-tolerance measurements, with a grace period after every jump.
-- **Reliable launch**: `playFromUri` first, then opening Deezer through an intent if the media session does not respond.
+- The same queue logic runs alone and together: alone, the phone is its own host.
+- **Playback anchor** (`PlayAnchor`): a track, a position and the host time at which that position was true.
+- **Sync** (`PlaybackController`, `SyncPolicy`): under 25 ms nothing, up to 150 ms a ±3 % speed nudge, beyond that a seek.
+- **Streams** are resolved by [InnerTubeX](https://github.com/MetrolistGroup/innertubex) just before playback.
 
-### Code structure
-
-```
-app/src/main/java/fr/lulu/unison/
-├── session/    queue logic, protocol, host/guest sessions, foreground service
-├── sync/       shared clock and drift correction
-├── net/        Wi-Fi (WebSocket) and no-Wi-Fi (Nearby) transports
-├── deezer/     Deezer control, search API, link parsing
-├── lyrics/     lyrics providers and LRC parsing
-├── share/      receiving shares from Deezer
-├── apkshare/   sending the APK
-├── update/     updates from GitHub releases
-├── data/       local profile (DataStore)
-├── model/      shared models
-└── ui/         theme, components, Liquid Glass, screens
-```
+The app lives in [`v2/`](v2). The first version, which drove the Deezer app, is kept in `app/` for reference.
 
 ---
 
@@ -102,8 +67,6 @@ Download the latest APK from the [**Releases**](../../releases/latest) page, the
 
 **Requirements**
 - Android 13 or newer.
-- The **Deezer** app, installed and signed in.
-- On first launch, Unison asks for notification access. It **does not read any notification**: this permission is only used to reach Deezer's media session.
 
 ---
 
@@ -111,7 +74,7 @@ Download the latest APK from the [**Releases**](../../releases/latest) page, the
 
 ```bash
 git clone https://github.com/LuckyTheCookie/unison.git
-cd unison
+cd unison/v2
 ./gradlew assembleDebug        # debug APK
 ./gradlew testDebugUnitTest    # unit tests
 ```
@@ -120,7 +83,7 @@ You need JDK 17 or newer and the Android SDK (platform 37).
 
 ### Signing a release
 
-The release APK is signed with a local key that is never committed. Create `keystore.properties` at the project root:
+The release APK is signed with a local key that is never committed. Create `keystore.properties` at the repository root:
 
 ```properties
 storeFile=/path/to/unison-release.jks
@@ -141,13 +104,15 @@ Without this file the build simply isn't signed with your key.
 
 ## 🧰 Tech stack
 
-Kotlin · Jetpack Compose · Material 3 (Expressive) · Coroutines and Flow · kotlinx.serialization · OkHttp · Java-WebSocket · Nearby Connections · CameraX and ML Kit (QR scanning) · ZXing · Coil · DataStore
+Kotlin · Jetpack Compose · Media3 ExoPlayer · InnerTubeX · Room · Coroutines and Flow · kotlinx.serialization · Ktor/OkHttp · Java-WebSocket · Nearby Connections · CameraX and ML Kit · ZXing · Coil · DataStore
+
+Third-party notices: [`v2/THIRD_PARTY_NOTICES.md`](v2/THIRD_PARTY_NOTICES.md).
 
 ---
 
 ## ⚠️ Disclaimer
 
-Unison is neither affiliated with nor endorsed by Deezer. Every participant needs their own Deezer account to listen. The app does not bypass any subscription: it only controls playback in the official application.
+Unison is not affiliated with, nor endorsed by, YouTube or Google. It uses YouTube Music's private API, which may break without notice and whose use may be contrary to YouTube's terms of service.
 
 ## 📄 License
 

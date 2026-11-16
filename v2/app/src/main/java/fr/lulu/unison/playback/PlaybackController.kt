@@ -18,6 +18,7 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
@@ -285,12 +286,20 @@ class PlaybackController(
     // --- Lecteur ---
 
     private fun buildPlayer(): ExoPlayer {
-        val cacheBytes = runBlocking(Dispatchers.IO) { prefs.settings.first() }.also { settings = it }.cacheMb * 1024L * 1024L
-        val cache = SimpleCache(File(context.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(cacheBytes), StandaloneDatabaseProvider(context))
-        val cached = CacheDataSource.Factory()
-            .setCache(cache)
-            .setUpstreamDataSourceFactory(OkHttpDataSource.Factory(okHttp))
-            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+        // Le cache est créé à la première lecture, sur le fil de chargement : lire les réglages
+        // de façon bloquante sur le fil principal figerait l'app au démarrage.
+        val cached = object : DataSource.Factory {
+            private val factory by lazy {
+                val cacheBytes = runBlocking { prefs.settings.first() }.cacheMb * 1024L * 1024L
+                val cache = SimpleCache(File(context.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(cacheBytes), StandaloneDatabaseProvider(context))
+                CacheDataSource.Factory()
+                    .setCache(cache)
+                    .setUpstreamDataSourceFactory(OkHttpDataSource.Factory(okHttp))
+                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+            }
+
+            override fun createDataSource(): DataSource = factory.createDataSource()
+        }
         // L'adresse réelle du flux n'est demandée à YouTube qu'au moment de lire (elle expire en quelques heures).
         val resolving = ResolvingDataSource.Factory(cached) { spec ->
             if (spec.uri.scheme != SCHEME) return@Factory spec

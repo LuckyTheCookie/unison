@@ -39,7 +39,7 @@ object Ink {
     val Hairline = Color(0x14FFFFFF)
 
     /** Fond des surfaces en verre posées sur du contenu qui défile. */
-    val Glass = Color(0x99161618)
+    val Glass = Color(0xC7161618)
     val Sheet = Color(0xF2121214)
 
     val Accent = Color(0xFFC9A5FF)

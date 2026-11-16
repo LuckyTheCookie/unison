@@ -111,11 +111,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         messageJob = viewModelScope.launch { delay(2_600); _message.value = null }
     }
 
-    init {
-        if (!BuildConfig.DEBUG) { updates.clean(); updates.check() }
-        loadHome()
-    }
-
     fun onResume() = updates.resumeAfterPermission()
 
     // --- Lecture ---
@@ -307,6 +302,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setCacheMb(mb: Int) = viewModelScope.launch { graph.prefs.setCacheMb(mb) }
     fun setNormalize(on: Boolean) = viewModelScope.launch { graph.prefs.setNormalize(on) }
     fun setAnimatedBackground(on: Boolean) = viewModelScope.launch { graph.prefs.setAnimatedBackground(on) }
+
+    // En dernier : tous les champs ci-dessus doivent exister avant le premier chargement.
+    init {
+        if (!BuildConfig.DEBUG) { updates.clean(); updates.check() }
+        loadHome()
+    }
 
     private companion object {
         const val OFFLINE = "Vérifie ta connexion, puis réessaie."

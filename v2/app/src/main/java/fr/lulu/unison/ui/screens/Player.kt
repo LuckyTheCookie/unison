@@ -58,7 +58,6 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import fr.lulu.unison.R
@@ -290,13 +289,13 @@ private fun SyncedLyrics(lyrics: Lyrics, vm: AppViewModel) {
     val position = rememberPosition(vm, 100)
     val active = lyrics.indexAt(position + 150)
     val state = rememberLazyListState()
-    val density = LocalDensity.current
     BoxWithConstraints(Modifier.fillMaxSize().fadeEdges()) {
-        val pad = maxHeight * 0.38f
+        // La ligne en cours se pose au tiers haut de la zone, hors du fondu des bords.
+        val top = maxHeight * 0.26f
         LaunchedEffect(active) {
-            if (active >= 0 && !state.isScrollInProgress) state.animateScrollToItem(active, scrollOffset = with(density) { -12.dp.roundToPx() })
+            if (active >= 0 && !state.isScrollInProgress) state.animateScrollToItem(active)
         }
-        LazyColumn(state = state, contentPadding = PaddingValues(top = 24.dp, bottom = pad), modifier = Modifier.fillMaxSize()) {
+        LazyColumn(state = state, contentPadding = PaddingValues(top = top, bottom = maxHeight * 0.6f), modifier = Modifier.fillMaxSize()) {
             itemsIndexed(lyrics.lines) { i, line ->
                 val isActive = i == active
                 val alpha by animateFloatAsState(if (isActive) 1f else if (i < active) 0.3f else 0.42f, tween(320, easing = Motion.Ease), label = "a")
