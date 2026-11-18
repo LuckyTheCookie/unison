@@ -68,6 +68,7 @@ fun LibraryScreen(vm: AppViewModel) {
     val history by vm.history.collectAsState()
     val playlists by vm.playlists.collectAsState()
     val saved by vm.saved.collectAsState()
+    val downloads by vm.downloadRows.collectAsState()
     var creating by remember { mutableStateOf(false) }
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {
@@ -75,6 +76,13 @@ fun LibraryScreen(vm: AppViewModel) {
         item {
             LibraryRow("Favoris", plural(favorites.size, "titre"), onClick = nav.favorites) { GeneratedCover(R.drawable.ic_heart_fill, FavoritesColors, 54.dp) }
             LibraryRow("Historique", plural(history.size, "titre"), onClick = nav.history) { GeneratedCover(R.drawable.ic_history_line, HistoryColors, 54.dp) }
+            val downloaded = downloads.count { it.state == fr.lulu.unison.library.DownloadState.DONE }
+            val pending = downloads.size - downloaded
+            LibraryRow(
+                "Téléchargements",
+                plural(downloaded, "titre") + if (pending > 0) " · $pending en cours" else "",
+                onClick = nav.downloads,
+            ) { GeneratedCover(R.drawable.ic_downloaded_fill, DownloadsColors, 54.dp) }
         }
         item {
             Row(Modifier.fillMaxWidth().padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -136,6 +144,7 @@ private fun LocalList(
     emptyTitle: String,
     emptyDetail: String,
     actions: @Composable () -> Unit = {},
+    downloadable: Boolean = false,
     onMore: (index: Int, Track) -> Unit,
 ) {
     val nav = LocalNav.current
@@ -153,6 +162,7 @@ private fun LocalList(
                         fr.lulu.unison.ui.components.PrimaryButton("Tout lire", { vm.playAll(tracks) }, icon = R.drawable.ic_play_fill, enabled = tracks.isNotEmpty())
                         GlassButton(null, { vm.playAll(tracks, shuffle = true) }, icon = R.drawable.ic_shuffle_line, enabled = tracks.isNotEmpty())
                         GlassButton(null, { vm.addAllToQueue(tracks) }, icon = R.drawable.ic_queue_line, enabled = tracks.isNotEmpty())
+                        if (downloadable) DownloadAllButton(tracks, vm)
                     }
                 }
             }
@@ -170,6 +180,7 @@ fun FavoritesScreen(vm: AppViewModel) {
     LocalList(
         "Favoris", { GeneratedCover(R.drawable.ic_heart_fill, FavoritesColors, 180.dp) }, tracks, vm,
         emptyTitle = "Pas encore de favoris", emptyDetail = "Touche le cœur d'un titre pour le retrouver ici.",
+        downloadable = true,
         onMore = { _, t -> nav.trackMenu(t) },
     )
 }
@@ -203,6 +214,7 @@ fun PlaylistScreen(pid: Long, vm: AppViewModel) {
         },
         tracks, vm,
         emptyTitle = "Playlist vide", emptyDetail = "Ajoute des titres depuis leur menu « ⋮ ».",
+        downloadable = true,
         actions = {
             IconBtn(R.drawable.ic_edit_line, "Renommer", { renaming = true }, tint = Ink.Secondary)
             IconBtn(R.drawable.ic_delete_line, "Supprimer", { deleting = true }, tint = Ink.Secondary)
@@ -218,4 +230,17 @@ fun PlaylistScreen(pid: Long, vm: AppViewModel) {
     removing?.let { (rowId, track) ->
         TrackMenu(track, vm, onDismiss = { removing = null }, removeLabel = "Retirer de la playlist", onRemove = { vm.removeFromPlaylist(rowId) })
     }
+}
+
+/** « Tout télécharger » : icône pleine quand toute la liste est déjà sur le téléphone. */
+@Composable
+fun DownloadAllButton(tracks: List<Track>, vm: AppViewModel) {
+    val status by vm.downloadStatus.collectAsState()
+    val all = tracks.isNotEmpty() && tracks.all { status[it.id]?.done == true }
+    GlassButton(
+        null, { vm.download(tracks) },
+        icon = if (all) R.drawable.ic_downloaded_fill else R.drawable.ic_download_line,
+        tint = if (all) Ink.Accent else Ink.Primary,
+        enabled = tracks.isNotEmpty(),
+    )
 }

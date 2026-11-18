@@ -17,7 +17,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.database.DatabaseProvider
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
@@ -36,6 +36,8 @@ import androidx.media3.session.SessionToken
 import fr.lulu.unison.data.Prefs
 import fr.lulu.unison.data.Settings
 import fr.lulu.unison.model.PlayAnchor
+import fr.lulu.unison.offline.Connectivity
+import fr.lulu.unison.offline.Downloads
 import fr.lulu.unison.model.QueueItem
 import fr.lulu.unison.model.SessionSnapshot
 import fr.lulu.unison.session.Cmd
@@ -77,6 +79,9 @@ class PlaybackController(
     private val streams: StreamResolver,
     private val prefs: Prefs,
     private val okHttp: OkHttpClient,
+    private val databaseProvider: DatabaseProvider,
+    private val downloads: Downloads,
+    private val connectivity: Connectivity,
 ) {
     data class State(
         val loadedUid: String? = null,
@@ -175,6 +180,7 @@ class PlaybackController(
             if (loaded != null) unload()
             return
         }
+        if (skipIfOffline(s, item)) return
         // À plusieurs, chaque titre se termine en pause : le suivant part à l'heure commune, pas dès que ce téléphone a fini.
         if (exo.pauseAtEndOfMediaItems != s.shared) exo.pauseAtEndOfMediaItems = s.shared
         val moved = place(item, a)
@@ -183,6 +189,29 @@ class PlaybackController(
         follow(a, s.shared, anchorChanged)
         prepareNext(Gapless.upcoming(s))
     }
+
+    /**
+     * Hors ligne, la file saute les titres qui ne sont pas téléchargés (c'est l'hôte qui décide de la file).
+     * Après un tour complet sans titre jouable, la lecture se met en pause.
+     */
+    private fun skipIfOffline(s: SessionSnapshot, item: QueueItem): Boolean {
+        if (connectivity.online.value || downloads.isComplete(item.track.id) || !sessions.isHost) {
+            offlineSkips = 0; offlineSkipped = null
+            return false
+        }
+        if (item.uid == offlineSkipped) return true
+        offlineSkipped = item.uid
+        if (exo.playWhenReady) exo.pause()
+        _state.update { it.copy(error = "Hors ligne : titre non téléchargé", buffering = false) }
+        if (++offlineSkips > s.queue.size + s.history.size + 1) {
+            offlineSkips = 0
+            sessions.send(Cmd.Pause)
+        } else sessions.local.trackFailed(item.uid)
+        return true
+    }
+
+    private var offlineSkipped: String? = null
+    private var offlineSkips = 0
 
     /** Amène le lecteur sur [item] : rien à faire, passage au titre déjà préparé, ou chargement complet. */
     private fun place(item: QueueItem, a: PlayAnchor): Boolean {
@@ -271,7 +300,8 @@ class PlaybackController(
         val index = exo.currentMediaItemIndex
         if (index > 0) exo.removeMediaItems(0, index) // titre précédent, déjà enchaîné
         val repeatOne = next?.uid == current.uid
-        val wanted = next?.takeIf { !repeatOne && it.track.id !in unplayable }
+        val playable = next != null && (connectivity.online.value || downloads.isComplete(next.track.id))
+        val wanted = next?.takeIf { !repeatOne && playable && it.track.id !in unplayable }
         val mode = if (repeatOne) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
         if (exo.repeatMode != mode) exo.repeatMode = mode
         val count = exo.mediaItemCount
@@ -298,6 +328,14 @@ class PlaybackController(
         prefetchJob?.cancel()
         prefetchingUid = next.uid
         val id = next.track.id
+        if (downloads.isComplete(id)) {
+            // Déjà sur le téléphone : rien à préparer sur le réseau.
+            loudness[id] = downloads.loudnessOf(id)
+            prefetchedUid = next.uid
+            prefetchJob = null
+            scope.launch { if (loaded != null) prepareNext(Gapless.upcoming(sessions.snapshot.value)) }
+            return
+        }
         prefetchJob = scope.launch {
             val stream = runCatching { withContext(Dispatchers.IO) { streams.resolve(id) } }
                 .onFailure {
@@ -421,12 +459,18 @@ class PlaybackController(
     // --- Lecteur ---
 
     private fun buildPlayer(): ExoPlayer {
-        val cached = DataSource.Factory { cacheFactory.createDataSource() }
+        // Titre téléchargé : lu dans le cache permanent, sans réseau ; sinon cache de lecture puis YouTube.
+        val offline = CacheDataSource.Factory().setCache(downloads.cache).setCacheWriteDataSinkFactory(null)
+        val cached = DataSource.Factory { OfflineFirstDataSource(offline.createDataSource(), cacheFactory.createDataSource()) }
         // L'adresse réelle du flux n'est demandée à YouTube qu'au moment de lire (elle expire en quelques heures).
         // Pour le titre suivant, elle a déjà été obtenue par [prefetch] : la résolution ci-dessous est immédiate.
         val resolving = ResolvingDataSource.Factory(cached) { spec ->
             if (spec.uri.scheme != SCHEME) return@Factory spec
             val id = spec.uri.lastPathSegment ?: throw StreamUnavailableException("Titre invalide")
+            if (downloads.isComplete(id)) {
+                main.post { loudness[id] = downloads.loudnessOf(id); applyVolume() }
+                return@Factory spec.buildUpon().setKey(Downloads.cacheKey(id)).build()
+            }
             val stream = runBlocking { streams.resolve(id) }
             main.post { loudness[id] = stream.loudnessDb; applyVolume() }
             spec.buildUpon()
@@ -455,7 +499,7 @@ class PlaybackController(
     // sur le fil principal figerait l'app au démarrage.
     private val cacheFactory: CacheDataSource.Factory by lazy {
         val cacheBytes = runBlocking { prefs.settings.first() }.cacheMb * 1024L * 1024L
-        val cache = SimpleCache(File(context.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(cacheBytes), StandaloneDatabaseProvider(context))
+        val cache = SimpleCache(File(context.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(cacheBytes), databaseProvider)
         CacheDataSource.Factory()
             .setCache(cache)
             .setUpstreamDataSourceFactory(OkHttpDataSource.Factory(okHttp))
@@ -619,5 +663,35 @@ class PlaybackController(
         const val PRELOAD_US = 20_000_000L
         const val PREFETCH_RETRY_MS = 15_000L
         val EXPIRED_CODES = setOf(403, 410)
+    }
+}
+
+/**
+ * Lit un titre téléchargé dans le cache permanent (clé « dl: ») et tout le reste par le chemin habituel
+ * (cache de lecture, puis réseau). Le choix se fait à l'ouverture, d'après la clé que donne la résolution.
+ */
+private class OfflineFirstDataSource(private val offline: DataSource, private val online: DataSource) : DataSource {
+    private var current: DataSource? = null
+
+    override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) {
+        offline.addTransferListener(transferListener)
+        online.addTransferListener(transferListener)
+    }
+
+    override fun open(dataSpec: DataSpec): Long {
+        val source = if (dataSpec.key?.startsWith(Downloads.KEY_PREFIX) == true) offline else online
+        current = source
+        return source.open(dataSpec)
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+        current?.read(buffer, offset, length) ?: throw java.io.IOException("Source fermée")
+
+    override fun getUri(): Uri? = current?.uri
+
+    override fun getResponseHeaders(): Map<String, List<String>> = current?.responseHeaders ?: emptyMap()
+
+    override fun close() {
+        try { current?.close() } finally { current = null }
     }
 }

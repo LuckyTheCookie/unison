@@ -2,4 +2,6 @@
 <resources>
     <string name="app_name">Unison</string>
     <string name="share_label">Ajouter à Unison</string>
+    <string name="download_channel">Téléchargements</string>
+    <string name="download_channel_detail">Avancement des titres gardés pour l\'écoute hors ligne</string>
 </resources>

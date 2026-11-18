@@ -241,6 +241,7 @@ fun CollectionScreen(browseId: String, vm: AppViewModel) {
                             tint = if (isSaved) Ink.Accent else Ink.Primary,
                         )
                         GlassButton(null, { vm.addAllToQueue(page.tracks) }, icon = R.drawable.ic_queue_line, enabled = page.tracks.isNotEmpty())
+                        DownloadAllButton(page.tracks, vm)
                     }
                 }
                 if (page.tracks.isEmpty()) item { Notice("Aucun titre lisible ici", icon = R.drawable.ic_music_line) }

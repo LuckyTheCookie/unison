@@ -1,9 +1,11 @@
 package fr.lulu.unison.ui
 
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import fr.lulu.unison.model.Track
+import fr.lulu.unison.offline.DownloadStatus
 import fr.lulu.unison.youtube.AlbumItem
 import fr.lulu.unison.youtube.ArtistItem
 import fr.lulu.unison.youtube.BrowseRef
@@ -21,6 +23,7 @@ class Nav(
     val history: () -> Unit,
     val playlist: (pid: Long) -> Unit,
     val settings: () -> Unit,
+    val downloads: () -> Unit,
     val together: () -> Unit,
     /** Ouvre le menu d'un titre (lire ensuite, favoris, playlist…). */
     val trackMenu: (Track) -> Unit,
@@ -48,3 +51,6 @@ val LocalNav = staticCompositionLocalOf<Nav> { error("Nav absent") }
 
 /** Hauteur occupée en bas par la barre d'onglets et le mini-lecteur : les listes la laissent libre. */
 val LocalBottomInset = staticCompositionLocalOf<Dp> { 0.dp }
+
+/** État des téléchargements par identifiant de titre : chaque ligne de titre affiche le sien. */
+val LocalDownloads = compositionLocalOf<Map<String, DownloadStatus>> { emptyMap() }

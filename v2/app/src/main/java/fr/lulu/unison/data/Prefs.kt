@@ -20,6 +20,8 @@ data class Settings(
     val cacheMb: Int = 512,
     val normalizeVolume: Boolean = true,
     val animatedBackground: Boolean = true,
+    /** Les téléchargements attendent le Wi-Fi (ou un réseau non facturé). */
+    val downloadWifiOnly: Boolean = true,
 )
 
 private val Context.store by preferencesDataStore("profile")
@@ -33,6 +35,7 @@ class Prefs(private val context: Context) {
     private val kCacheMb = intPreferencesKey("cache_mb")
     private val kNormalize = booleanPreferencesKey("normalize")
     private val kAnimated = booleanPreferencesKey("animated_bg")
+    private val kWifiOnly = booleanPreferencesKey("download_wifi_only")
 
     val profile: Flow<Profile> = context.store.data.map { p ->
         Profile(p[kId] ?: "", p[kName]?.ifBlank { null } ?: defaultName(), p[kColor] ?: AvatarColors[5])
@@ -44,6 +47,7 @@ class Prefs(private val context: Context) {
             cacheMb = p[kCacheMb] ?: 512,
             normalizeVolume = p[kNormalize] ?: true,
             animatedBackground = p[kAnimated] ?: true,
+            downloadWifiOnly = p[kWifiOnly] ?: true,
         )
     }
 
@@ -68,6 +72,7 @@ class Prefs(private val context: Context) {
     suspend fun setCacheMb(mb: Int) { context.store.edit { it[kCacheMb] = mb } }
     suspend fun setNormalize(on: Boolean) { context.store.edit { it[kNormalize] = on } }
     suspend fun setAnimatedBackground(on: Boolean) { context.store.edit { it[kAnimated] = on } }
+    suspend fun setDownloadWifiOnly(on: Boolean) { context.store.edit { it[kWifiOnly] = on } }
 
     private fun defaultName(): String = Build.MODEL?.take(24)?.ifBlank { null } ?: "Mon téléphone"
 }

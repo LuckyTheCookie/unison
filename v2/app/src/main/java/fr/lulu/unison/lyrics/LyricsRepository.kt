@@ -10,6 +10,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
@@ -143,7 +144,11 @@ class NeteaseProvider(private val http: OkHttpClient) : LyricsProvider {
  * mot à mot de NetEase (YRC) → LRCLIB (LRC, parfois enrichi) → NetEase à la ligne → paroles simples de LRCLIB.
  * Les paroles synchronisées reçoivent toujours un minutage par mot, estimé quand la source n'en donne pas.
  */
-class LyricsRepository(http: OkHttpClient) {
+class LyricsRepository(
+    http: OkHttpClient,
+    /** Dossier des paroles gardées avec les titres téléchargés (null : rien n'est gardé). */
+    private val offlineDir: File? = null,
+) {
     private val lrclib = LrclibProvider(http)
     private val netease = NeteaseProvider(http)
     private val providers: List<LyricsProvider> = listOf(netease, lrclib)
@@ -156,16 +161,43 @@ class LyricsRepository(http: OkHttpClient) {
 
     private suspend fun lookup(track: Track): Lyrics? {
         cache[track.id]?.let { return it }
+        readOffline(track.id)?.let { cache[track.id] = it; return it }
         if (track.id in missing) return null
         var plain: Lyrics? = null
         var lineSynced: Lyrics? = null
+        var failed = false
         for (p in providers) {
-            val found = runCatching { p.find(track) }.onFailure { Log.w("UnisonLyrics", "${p.name}", it) }.getOrNull()
+            val found = runCatching { p.find(track) }.onFailure { Log.w("UnisonLyrics", "${p.name}", it); failed = true }.getOrNull()
             if (p === lrclib) plain = lrclib.lastPlain
             if (p === netease) lineSynced = netease.lastLineSynced
             if (found != null) return Karaoke.complete(found).also { cache[track.id] = it }
         }
         val best = lineSynced?.let(Karaoke::complete) ?: plain
-        return best?.also { cache[track.id] = it } ?: run { missing += track.id; null }
+        // Sans réseau, « introuvable » n'est pas définitif : on réessaiera plus tard.
+        return best?.also { cache[track.id] = it } ?: run { if (!failed) missing += track.id; null }
+    }
+
+    private fun offlineFile(id: String) = offlineDir?.let { File(it, "$id.json") }
+
+    private suspend fun readOffline(id: String): Lyrics? = withContext(Dispatchers.IO) {
+        val f = offlineFile(id)?.takeIf { it.exists() } ?: return@withContext null
+        runCatching { json.decodeFromString(Lyrics.serializer(), f.readText()) }.getOrNull()
+    }
+
+    /** Garde les paroles de [track] sur le téléphone, pour les afficher hors ligne. */
+    suspend fun keepOffline(track: Track) {
+        val dir = offlineDir ?: return
+        val l = lyricsFor(track) ?: return
+        withContext(Dispatchers.IO) {
+            dir.mkdirs()
+            val f = File(dir, "${track.id}.json")
+            val tmp = File(dir, "${track.id}.json.tmp")
+            tmp.writeText(json.encodeToString(Lyrics.serializer(), l))
+            tmp.renameTo(f)
+        }
+    }
+
+    fun forgetOffline(id: String) {
+        offlineFile(id)?.delete()
     }
 }

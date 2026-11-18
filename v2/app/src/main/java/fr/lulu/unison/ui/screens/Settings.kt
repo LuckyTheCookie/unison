@@ -115,6 +115,15 @@ fun SettingsScreen(vm: AppViewModel) {
                 }
             }
 
+            Label("Hors ligne")
+            GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
+                SwitchRow("Télécharger en Wi-Fi uniquement", "Les téléchargements attendent un réseau Wi-Fi au lieu d'utiliser les données mobiles", settings.downloadWifiOnly) {
+                    vm.setDownloadWifiOnly(!settings.downloadWifiOnly)
+                }
+                Divider()
+                GlassButton("Gérer les téléchargements", nav.downloads, Modifier.fillMaxWidth(), icon = R.drawable.ic_download_line)
+            }
+
             Label("Apparence")
             GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
                 SwitchRow("Fond animé", "Le fond tiré de la pochette ondule doucement. Le couper économise un peu de batterie.", settings.animatedBackground) {

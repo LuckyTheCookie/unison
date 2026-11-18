@@ -13,6 +13,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import fr.lulu.unison.model.Track
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -61,6 +63,29 @@ data class SavedRow(
 )
 
 data class PlaylistSummary(val pid: Long, val name: String, val count: Int, val cover: String?)
+
+/** Titre gardé sur le téléphone pour l'écouter sans réseau (miroir de l'état du gestionnaire de Media3). */
+@Entity(tableName = "download", primaryKeys = ["trackId"])
+data class DownloadRow(
+    @Embedded val track: TrackCols,
+    /** Voir [DownloadState]. */
+    val state: Int,
+    val bytes: Long,
+    val totalBytes: Long,
+    /** Format du flux enregistré (itag YouTube), 0 tant qu'il n'est pas connu. */
+    val itag: Int,
+    /** Niveau sonore annoncé par YouTube, pour égaliser le volume hors ligne. */
+    val loudnessDb: Double?,
+    val addedAt: Long,
+)
+
+object DownloadState {
+    const val QUEUED = 0
+    const val DOWNLOADING = 1
+    const val PAUSED = 2
+    const val DONE = 3
+    const val FAILED = 4
+}
 
 @Dao
 interface LibraryDao {
@@ -150,20 +175,60 @@ interface LibraryDao {
 
     @Query("DELETE FROM saved WHERE browseId = :browseId")
     suspend fun unsave(browseId: String)
+
+    @Query("SELECT * FROM download ORDER BY addedAt DESC")
+    fun downloads(): Flow<List<DownloadRow>>
+
+    @Query("SELECT * FROM download")
+    suspend fun allDownloads(): List<DownloadRow>
+
+    @Query("SELECT * FROM download WHERE trackId = :id")
+    suspend fun download(id: String): DownloadRow?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertDownloads(rows: List<DownloadRow>)
+
+    @Query("UPDATE download SET state = :state, bytes = :bytes, totalBytes = :total WHERE trackId = :id")
+    suspend fun setDownloadState(id: String, state: Int, bytes: Long, total: Long)
+
+    @Query("UPDATE download SET itag = :itag, loudnessDb = :loudnessDb WHERE trackId = :id")
+    suspend fun setDownloadFormat(id: String, itag: Int, loudnessDb: Double?)
+
+    @Query("DELETE FROM download WHERE trackId = :id")
+    suspend fun deleteDownload(id: String)
 }
 
 @Database(
-    entities = [FavoriteRow::class, HistoryRow::class, PlaylistRow::class, PlaylistTrackRow::class, SavedRow::class],
-    version = 1,
+    entities = [FavoriteRow::class, HistoryRow::class, PlaylistRow::class, PlaylistTrackRow::class, SavedRow::class, DownloadRow::class],
+    version = 2,
     exportSchema = false,
 )
 abstract class LibraryDb : RoomDatabase() {
     abstract fun dao(): LibraryDao
 }
 
+/** Migrations de la base : on ne perd jamais les favoris ni les playlists en mettant à jour l'app. */
+object LibraryMigrations {
+    /** 2.1 : titres téléchargés. */
+    val V1_V2 = object : Migration(1, 2) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `download` (`state` INTEGER NOT NULL, `bytes` INTEGER NOT NULL, " +
+                    "`totalBytes` INTEGER NOT NULL, `itag` INTEGER NOT NULL, `loudnessDb` REAL, `addedAt` INTEGER NOT NULL, " +
+                    "`trackId` TEXT NOT NULL, `title` TEXT NOT NULL, `artist` TEXT NOT NULL, `album` TEXT NOT NULL, " +
+                    "`cover` TEXT NOT NULL, `durationMs` INTEGER NOT NULL, `explicit` INTEGER NOT NULL, PRIMARY KEY(`trackId`))",
+            )
+        }
+    }
+
+    val ALL = arrayOf(V1_V2)
+}
+
 /** Favoris, playlists et historique : tout reste sur le téléphone, sans compte. */
 class Library(context: Context, private val now: () -> Long = System::currentTimeMillis) {
-    private val dao = Room.databaseBuilder(context, LibraryDb::class.java, "library.db").build().dao()
+    private val dao = Room.databaseBuilder(context, LibraryDb::class.java, "library.db")
+        .addMigrations(*LibraryMigrations.ALL)
+        .build().dao()
 
     val favorites: Flow<List<Track>> = dao.favorites().map { rows -> rows.map { it.track.toTrack() } }
     val favoriteIds: Flow<Set<String>> = dao.favoriteIds().map { it.toSet() }
@@ -194,4 +259,23 @@ class Library(context: Context, private val now: () -> Long = System::currentTim
     suspend fun setSaved(row: SavedRow, on: Boolean) {
         if (on) dao.save(row.copy(addedAt = now())) else dao.unsave(row.browseId)
     }
+
+    // --- Téléchargements ---
+
+    val downloads: Flow<List<DownloadRow>> = dao.downloads()
+    suspend fun allDownloads(): List<DownloadRow> = dao.allDownloads()
+    suspend fun download(id: String): DownloadRow? = dao.download(id)
+
+    /** Ajoute les titres absents à la liste des téléchargements ; renvoie ceux qui sont nouveaux. */
+    suspend fun addDownloads(tracks: List<Track>): List<Track> {
+        val known = dao.allDownloads().map { it.track.trackId }.toSet()
+        val fresh = tracks.distinctBy { it.id }.filter { it.id !in known }
+        val t = now()
+        dao.insertDownloads(fresh.mapIndexed { i, tr -> DownloadRow(tr.toCols(), DownloadState.QUEUED, 0, 0, 0, null, t - i) })
+        return fresh
+    }
+
+    suspend fun setDownloadState(id: String, state: Int, bytes: Long, total: Long) = dao.setDownloadState(id, state, bytes, total)
+    suspend fun setDownloadFormat(id: String, itag: Int, loudnessDb: Double?) = dao.setDownloadFormat(id, itag, loudnessDb)
+    suspend fun deleteDownload(id: String) = dao.deleteDownload(id)
 }

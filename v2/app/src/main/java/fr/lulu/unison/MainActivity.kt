@@ -68,6 +68,7 @@ import fr.lulu.unison.model.TransportKind
 import fr.lulu.unison.session.Cmd
 import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.LocalBottomInset
+import fr.lulu.unison.ui.LocalDownloads
 import fr.lulu.unison.ui.LocalNav
 import fr.lulu.unison.ui.Nav
 import fr.lulu.unison.ui.PredictiveSheet
@@ -80,6 +81,7 @@ import fr.lulu.unison.ui.kawarp.KawarpBackground
 import fr.lulu.unison.ui.screens.ArtistScreen
 import fr.lulu.unison.ui.screens.BrowseScreen
 import fr.lulu.unison.ui.screens.CollectionScreen
+import fr.lulu.unison.ui.screens.DownloadsScreen
 import fr.lulu.unison.ui.screens.FavoritesScreen
 import fr.lulu.unison.ui.screens.HistoryScreen
 import fr.lulu.unison.ui.screens.HomeScreen
@@ -166,6 +168,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
     val settings by vm.settings.collectAsState()
     val update by vm.updateState.collectAsState()
     val message by vm.message.collectAsState()
+    val downloads by vm.downloadStatus.collectAsState()
     val current = snap.anchor.item
 
     var playerOpen by remember { mutableStateOf(false) }
@@ -213,6 +216,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
             history = { navController.navigate("history") },
             playlist = { pid -> navController.navigate("playlist/$pid") },
             settings = { navController.navigate("settings") },
+            downloads = { navController.navigate("downloads") },
             together = { togetherOpen = true },
             trackMenu = { menuTrack = it },
         )
@@ -222,80 +226,83 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
     val bottomInset = navBar + 76.dp + if (current != null) 72.dp else 0.dp
     val backdrop = rememberLayerBackdrop()
 
-    Box(Modifier.fillMaxSize().background(Ink.Canvas)) {
-        Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-            KawarpBackground(current?.track?.cover, Modifier.fillMaxSize(), dim = 0.6f, animated = settings.animatedBackground && !playerOpen)
-            CompositionLocalProvider(LocalNav provides nav, LocalBottomInset provides bottomInset) {
-                NavHost(
-                    navController, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize(),
-                    enterTransition = { fadeIn(tween(Motion.Page, easing = Motion.Ease)) + slideInVertically(tween(Motion.Page, easing = Motion.Ease)) { 24 } },
-                    exitTransition = { fadeOut(tween(Motion.Fast)) },
-                    // Retour (y compris prédictif, que le geste fait avancer) : la page quitte en rétrécissant,
-                    // celle d'en dessous revient en grandissant légèrement.
-                    popEnterTransition = { fadeIn(tween(Motion.Page, easing = Motion.Ease)) + scaleIn(tween(Motion.Page, easing = Motion.Ease), initialScale = 0.96f) },
-                    popExitTransition = { fadeOut(tween(Motion.Page)) + scaleOut(tween(Motion.Page), targetScale = 0.9f) },
-                ) {
-                    composable(Tab.Home.route) { HomeScreen(vm) }
-                    composable(Tab.Search.route) { SearchScreen(vm) }
-                    composable(Tab.Library.route) { LibraryScreen(vm) }
-                    composable("collection/{id}") { entry -> CollectionScreen(entry.arguments?.getString("id").orEmpty(), vm) }
-                    composable("artist/{id}") { entry -> ArtistScreen(entry.arguments?.getString("id").orEmpty(), vm) }
-                    composable("browse") { browseTarget?.let { (ref, title) -> BrowseScreen(ref, title, vm) } }
-                    composable("favorites") { FavoritesScreen(vm) }
-                    composable("history") { HistoryScreen(vm) }
-                    composable("playlist/{pid}") { entry -> PlaylistScreen(entry.arguments?.getString("pid")?.toLongOrNull() ?: 0, vm) }
-                    composable("settings") { SettingsScreen(vm) }
+    CompositionLocalProvider(LocalDownloads provides downloads) {
+        Box(Modifier.fillMaxSize().background(Ink.Canvas)) {
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                KawarpBackground(current?.track?.cover, Modifier.fillMaxSize(), dim = 0.6f, animated = settings.animatedBackground && !playerOpen)
+                CompositionLocalProvider(LocalNav provides nav, LocalBottomInset provides bottomInset) {
+                    NavHost(
+                        navController, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize(),
+                        enterTransition = { fadeIn(tween(Motion.Page, easing = Motion.Ease)) + slideInVertically(tween(Motion.Page, easing = Motion.Ease)) { 24 } },
+                        exitTransition = { fadeOut(tween(Motion.Fast)) },
+                        // Retour (y compris prédictif, que le geste fait avancer) : la page quitte en rétrécissant,
+                        // celle d'en dessous revient en grandissant légèrement.
+                        popEnterTransition = { fadeIn(tween(Motion.Page, easing = Motion.Ease)) + scaleIn(tween(Motion.Page, easing = Motion.Ease), initialScale = 0.96f) },
+                        popExitTransition = { fadeOut(tween(Motion.Page)) + scaleOut(tween(Motion.Page), targetScale = 0.9f) },
+                    ) {
+                        composable(Tab.Home.route) { HomeScreen(vm) }
+                        composable(Tab.Search.route) { SearchScreen(vm) }
+                        composable(Tab.Library.route) { LibraryScreen(vm) }
+                        composable("collection/{id}") { entry -> CollectionScreen(entry.arguments?.getString("id").orEmpty(), vm) }
+                        composable("artist/{id}") { entry -> ArtistScreen(entry.arguments?.getString("id").orEmpty(), vm) }
+                        composable("browse") { browseTarget?.let { (ref, title) -> BrowseScreen(ref, title, vm) } }
+                        composable("favorites") { FavoritesScreen(vm) }
+                        composable("history") { HistoryScreen(vm) }
+                        composable("playlist/{pid}") { entry -> PlaylistScreen(entry.arguments?.getString("pid")?.toLongOrNull() ?: 0, vm) }
+                        composable("settings") { SettingsScreen(vm) }
+                        composable("downloads") { DownloadsScreen(vm) }
+                    }
                 }
             }
-        }
 
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp).padding(bottom = 8.dp)) {
-            AnimatedVisibility(message != null, enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut()) {
-                Box(Modifier.fillMaxWidth().padding(bottom = 8.dp), contentAlignment = Alignment.Center) {
-                    Text(
-                        message.orEmpty(), style = Type.Label, color = Ink.ButtonText,
-                        modifier = Modifier.clip(Radius.Pill).background(Ink.ButtonBg).padding(horizontal = 16.dp, vertical = 10.dp),
+            Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp).padding(bottom = 8.dp)) {
+                AnimatedVisibility(message != null, enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut()) {
+                    Box(Modifier.fillMaxWidth().padding(bottom = 8.dp), contentAlignment = Alignment.Center) {
+                        Text(
+                            message.orEmpty(), style = Type.Label, color = Ink.ButtonText,
+                            modifier = Modifier.clip(Radius.Pill).background(Ink.ButtonBg).padding(horizontal = 16.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+                if (current != null) {
+                    MiniPlayer(vm, current.track, snap.anchor.playing, backdrop, onOpen = { playerPage = PlayerPage.Art; playerOpen = true })
+                    Spacer(Modifier.height(8.dp))
+                }
+                BottomBar(navController, backdrop)
+            }
+
+            CompositionLocalProvider(LocalNav provides nav) {
+                // Le geste de retour ferme le lecteur depuis la pochette ; depuis les paroles ou la file, il y ramène.
+                PredictiveSheet(
+                    playerOpen && current != null,
+                    backEnabled = playerPage == PlayerPage.Art && !togetherOpen && !scanning,
+                    onBack = { playerOpen = false },
+                ) { gesturing ->
+                    PlayerScreen(vm, playerPage, onPage = { playerPage = it }, onClose = { playerOpen = false }, gesturing = gesturing)
+                }
+                BackHandler(playerOpen && playerPage != PlayerPage.Art && !togetherOpen && !scanning) { playerPage = PlayerPage.Art }
+                PredictiveSheet(togetherOpen, backEnabled = !scanning, onBack = { togetherOpen = false }) {
+                    TogetherScreen(
+                        vm,
+                        onShare = { kind -> withTransportPermissions(kind) { vm.share(kind) } },
+                        onScan = { scanning = true },
+                        onClose = { togetherOpen = false },
                     )
                 }
             }
-            if (current != null) {
-                MiniPlayer(vm, current.track, snap.anchor.playing, backdrop, onOpen = { playerPage = PlayerPage.Art; playerOpen = true })
-                Spacer(Modifier.height(8.dp))
-            }
-            BottomBar(navController, backdrop)
-        }
+            if (scanning) ScannerScreen(onResult = { raw -> join(raw) }, onClose = { scanning = false })
+            menuTrack?.let { TrackMenu(it, vm, onDismiss = { menuTrack = null }) }
 
-        CompositionLocalProvider(LocalNav provides nav) {
-            // Le geste de retour ferme le lecteur depuis la pochette ; depuis les paroles ou la file, il y ramène.
-            PredictiveSheet(
-                playerOpen && current != null,
-                backEnabled = playerPage == PlayerPage.Art && !togetherOpen && !scanning,
-                onBack = { playerOpen = false },
-            ) { gesturing ->
-                PlayerScreen(vm, playerPage, onPage = { playerPage = it }, onClose = { playerOpen = false }, gesturing = gesturing)
-            }
-            BackHandler(playerOpen && playerPage != PlayerPage.Art && !togetherOpen && !scanning) { playerPage = PlayerPage.Art }
-            PredictiveSheet(togetherOpen, backEnabled = !scanning, onBack = { togetherOpen = false }) {
-                TogetherScreen(
-                    vm,
-                    onShare = { kind -> withTransportPermissions(kind) { vm.share(kind) } },
-                    onScan = { scanning = true },
-                    onClose = { togetherOpen = false },
+            if (update.isActionable()) {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                UpdateCard(
+                    update,
+                    onDownload = vm.updates::download,
+                    onGrantPermission = { context.startActivity(vm.updates.permissionIntent()) },
+                    onLater = vm.updates::dismiss,
+                    onCancel = vm.updates::cancelDownload,
                 )
             }
-        }
-        if (scanning) ScannerScreen(onResult = { raw -> join(raw) }, onClose = { scanning = false })
-        menuTrack?.let { TrackMenu(it, vm, onDismiss = { menuTrack = null }) }
-
-        if (update.isActionable()) {
-            val context = androidx.compose.ui.platform.LocalContext.current
-            UpdateCard(
-                update,
-                onDownload = vm.updates::download,
-                onGrantPermission = { context.startActivity(vm.updates.permissionIntent()) },
-                onLater = vm.updates::dismiss,
-                onCancel = vm.updates::cancelDownload,
-            )
         }
     }
 

@@ -85,7 +85,9 @@ import fr.lulu.unison.session.Cmd
 import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.LocalNav
 import fr.lulu.unison.ui.LyricsUi
+import fr.lulu.unison.ui.LocalDownloads
 import fr.lulu.unison.ui.components.Cover
+import fr.lulu.unison.ui.components.DownloadBadge
 import fr.lulu.unison.ui.components.ExplicitBadge
 import fr.lulu.unison.ui.components.Glyph
 import fr.lulu.unison.ui.components.IconBtn
@@ -170,6 +172,7 @@ fun PlayerScreen(vm: AppViewModel, page: PlayerPage, onPage: (PlayerPage) -> Uni
                     Column(Modifier.weight(1f)) {
                         Text(track.title, style = Type.PlayerTitle, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            DownloadBadge(LocalDownloads.current[track.id], size = 16.dp)
                             if (track.explicit) ExplicitBadge()
                             Text(track.artist, style = Type.PlayerArtist, color = Ink.Secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }

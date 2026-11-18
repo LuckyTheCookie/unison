@@ -1,16 +1,20 @@
 package fr.lulu.unison.lyrics
 
+import kotlinx.serialization.Serializable
 import java.text.Normalizer
 
 /** Un mot (ou une syllabe) chanté de [startMs] à [endMs] ; [text] garde l'espace qui le suit. */
+@Serializable
 data class LyricWord(val startMs: Long, val endMs: Long, val text: String)
 
 /**
  * Une ligne de paroles. [words] découpe [text] (leur concaténation donne exactement [text]) avec le moment
  * où chaque mot est chanté ; null tant que la ligne n'est synchronisée qu'à la ligne.
  */
+@Serializable
 data class LyricLine(val timeMs: Long, val text: String, val words: List<LyricWord>? = null)
 
+@Serializable
 data class Lyrics(
     val lines: List<LyricLine>,
     val synced: Boolean,

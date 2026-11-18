@@ -49,7 +49,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import fr.lulu.unison.R
+import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.model.Track
+import fr.lulu.unison.ui.components.DownloadBadge
 import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.components.Cover
 import fr.lulu.unison.ui.components.GlassButton
@@ -101,6 +103,8 @@ fun TrackMenu(
 ) {
     val context = LocalContext.current
     val favorites by vm.favoriteIds.collectAsState()
+    val downloads by vm.downloadStatus.collectAsState()
+    val download = downloads[track.id]
     var picking by remember { mutableStateOf(false) }
     if (picking) { PlaylistPicker(listOf(track), vm, onDismiss = { picking = false; onDismiss() }); return }
     Sheet(onDismiss) {
@@ -109,7 +113,10 @@ fun TrackMenu(
             Spacer(Modifier.width(14.dp))
             Column {
                 Text(track.title, style = Type.Title, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(track.artist, style = Type.Body, color = Ink.Secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DownloadBadge(download)
+                    Text(track.artist, style = Type.Body, color = Ink.Secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
         Spacer(Modifier.height(6.dp))
@@ -120,6 +127,14 @@ fun TrackMenu(
             vm.toggleFavorite(track); onDismiss()
         }
         SheetAction(R.drawable.ic_add_line, "Ajouter à une playlist") { picking = true }
+        when {
+            download == null || download.state == DownloadState.FAILED ->
+                SheetAction(R.drawable.ic_download_line, "Télécharger") { vm.download(listOf(track)); onDismiss() }
+            download.done ->
+                SheetAction(R.drawable.ic_downloaded_fill, "Supprimer le téléchargement", tint = Ink.Accent) { vm.removeDownload(track.id); onDismiss() }
+            else ->
+                SheetAction(R.drawable.ic_close_line, "Annuler le téléchargement", detail = "${(download.progress * 100).toInt()} %") { vm.removeDownload(track.id); onDismiss() }
+        }
         SheetAction(R.drawable.ic_radio_line, "Lancer la radio de ce titre") { vm.startRadio(track); onDismiss() }
         SheetAction(R.drawable.ic_share_line, "Partager") {
             val send = Intent(Intent.ACTION_SEND).setType("text/plain")

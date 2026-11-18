@@ -55,7 +55,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import fr.lulu.unison.R
+import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.model.Track
+import fr.lulu.unison.offline.DownloadStatus
+import fr.lulu.unison.offline.OfflineArt
+import fr.lulu.unison.ui.LocalDownloads
 import fr.lulu.unison.ui.theme.Ink
 import fr.lulu.unison.ui.theme.Radius
 import fr.lulu.unison.ui.theme.Type
@@ -119,11 +123,34 @@ fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, shape: Shape = 
     Box(modifier.size(size).clip(shape).background(Ink.Fill), contentAlignment = Alignment.Center) {
         if (url.isNullOrBlank()) Glyph(R.drawable.ic_music_fill, tint = Ink.Tertiary, size = size * 0.4f)
         else AsyncImage(
-            model = YtParser.resize(url, px),
+            // Pochette d'un titre téléchargé : le fichier local, qui s'affiche aussi sans réseau.
+            model = OfflineArt[url] ?: YtParser.resize(url, px),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
         )
+    }
+}
+
+/**
+ * Repère « téléchargé » : flèche cerclée quand le titre est sur le téléphone, anneau d'avancement pendant
+ * le téléchargement, rien sinon.
+ */
+@Composable
+fun DownloadBadge(status: DownloadStatus?, size: Dp = 14.dp, modifier: Modifier = Modifier) {
+    when {
+        status == null || status.state == DownloadState.FAILED -> Unit
+        status.done -> Glyph(R.drawable.ic_downloaded_fill, modifier.padding(end = 6.dp), tint = Ink.Accent, size = size)
+        else -> androidx.compose.foundation.Canvas(modifier.padding(end = 6.dp).size(size)) {
+            val stroke = this.size.minDimension * 0.16f
+            val inset = stroke / 2
+            val arc = androidx.compose.ui.geometry.Size(this.size.width - stroke, this.size.height - stroke)
+            val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
+            val style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+            drawArc(Ink.FillStrong, 0f, 360f, false, topLeft, arc, style = style)
+            val paused = status.state == DownloadState.PAUSED
+            drawArc(if (paused) Ink.Tertiary else Ink.Accent, -90f, 360f * status.progress.coerceAtLeast(0.04f), false, topLeft, arc, style = style)
+        }
     }
 }
 
@@ -184,6 +211,7 @@ fun TrackRow(
         Column(Modifier.weight(1f)) {
             Text(track.title, style = Type.Row, color = if (current) Ink.Accent else Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically) {
+                DownloadBadge(LocalDownloads.current[track.id])
                 if (track.explicit) ExplicitBadge()
                 Text(subtitle, style = Type.Body, color = Ink.Tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }

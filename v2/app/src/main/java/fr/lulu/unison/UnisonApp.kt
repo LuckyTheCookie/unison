@@ -3,7 +3,10 @@ package fr.lulu.unison
 import android.app.Application
 import fr.lulu.unison.data.Prefs
 import fr.lulu.unison.data.Settings
+import androidx.media3.database.StandaloneDatabaseProvider
 import fr.lulu.unison.library.Library
+import fr.lulu.unison.offline.Connectivity
+import fr.lulu.unison.offline.Downloads
 import fr.lulu.unison.lyrics.LyricsRepository
 import fr.lulu.unison.playback.AutoQueue
 import fr.lulu.unison.playback.PlaybackController
@@ -22,6 +25,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -41,13 +45,18 @@ class AppGraph(app: Application) {
     )
     val catalog: MusicCatalog = YouTubeCatalog(youtube)
     val library = Library(app)
-    val lyrics = LyricsRepository(http)
+    val lyrics = LyricsRepository(http, File(app.filesDir, "offline/lyrics"))
     val sessions = SessionManager(app, prefs)
-    val playback = PlaybackController(app, sessions, youtube, prefs, http)
+    /** Base partagée par le cache de lecture et celui des téléchargements. */
+    private val mediaDb = StandaloneDatabaseProvider(app)
+    val connectivity = Connectivity(app)
+    val downloads = Downloads(app, http, youtube, library, lyrics, prefs, mediaDb, scope)
+    val playback = PlaybackController(app, sessions, youtube, prefs, http, mediaDb, downloads, connectivity)
     val updates = UpdateManager(app, http)
     private val autoQueue = AutoQueue(sessions, catalog, scope)
 
     fun start() {
+        downloads.start()
         playback.start()
         autoQueue.start()
         // Historique : chaque titre réellement lancé sur ce téléphone.

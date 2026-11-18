@@ -6,7 +6,10 @@ import androidx.lifecycle.viewModelScope
 import fr.lulu.unison.BuildConfig
 import fr.lulu.unison.UnisonApp
 import fr.lulu.unison.data.Profile
+import fr.lulu.unison.library.DownloadRow
+import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.library.PlaylistSummary
+import fr.lulu.unison.offline.DownloadStatus
 import fr.lulu.unison.library.SavedRow
 import fr.lulu.unison.lyrics.Lyrics
 import fr.lulu.unison.model.JoinInfo
@@ -88,6 +91,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val history: StateFlow<List<Track>> = library.history.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val playlists: StateFlow<List<PlaylistSummary>> = library.playlists.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val saved: StateFlow<List<SavedRow>> = library.saved.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    // --- Hors ligne ---
+
+    private val downloads = graph.downloads
+    /** État de chaque titre téléchargé ou en cours (repère sur les lignes de titre). */
+    val downloadStatus: StateFlow<Map<String, DownloadStatus>> = downloads.status
+    val downloadRows: StateFlow<List<DownloadRow>> = downloads.rows.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val downloadsPaused: StateFlow<Boolean> = downloads.paused
+    val waitingForWifi: StateFlow<Boolean> = downloads.waitingForWifi
+    val online: StateFlow<Boolean> = graph.connectivity.online
 
     /** Paroles du titre en cours, cherchées dès qu'il change. */
     val lyrics: StateFlow<LyricsUi> = snapshot.map { it.anchor.item?.track }
@@ -176,6 +189,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun renamePlaylist(pid: Long, name: String) = viewModelScope.launch { if (name.isNotBlank()) library.renamePlaylist(pid, name) }
     fun deletePlaylist(pid: Long) = viewModelScope.launch { library.deletePlaylist(pid) }
     fun clearHistory() = viewModelScope.launch { library.clearHistory() }
+
+    /** Garde ces titres sur le téléphone pour les écouter sans réseau. */
+    fun download(tracks: List<Track>) {
+        val missing = tracks.filter { downloadStatus.value[it.id] == null || downloadStatus.value[it.id]?.state == DownloadState.FAILED }
+        if (missing.isEmpty()) { toast(if (tracks.size == 1) "Déjà téléchargé" else "Tout est déjà téléchargé"); return }
+        downloads.download(missing)
+        toast(if (missing.size == 1) "Téléchargement lancé" else "${missing.size} titres à télécharger")
+    }
+
+    fun removeDownload(id: String) { downloads.remove(id); toast("Téléchargement supprimé") }
+    fun removeDownloads(ids: List<String>) { ids.forEach(downloads::remove); toast("Téléchargements supprimés") }
+    fun pauseDownload(id: String) = downloads.pause(id)
+    fun resumeDownload(id: String) = downloads.resume(id)
+    fun pauseDownloads() = downloads.pauseAll()
+    fun resumeDownloads() = downloads.resumeAll()
+    fun downloadSpace(): Pair<Long, Long> = downloads.spaceBytes() to downloads.freeBytes()
+    fun setDownloadWifiOnly(on: Boolean) = viewModelScope.launch { graph.prefs.setDownloadWifiOnly(on) }
 
     fun toggleSaved(browseId: String, page: CollectionPage) = viewModelScope.launch {
         val on = saved.value.none { it.browseId == browseId }

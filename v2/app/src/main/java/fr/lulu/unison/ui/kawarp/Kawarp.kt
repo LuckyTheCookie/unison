@@ -144,7 +144,7 @@ fun KawarpBackground(
         val target = artworkUrl?.takeIf { it.isNotBlank() }?.let { url ->
             withContext(Dispatchers.Default) {
                 runCatching {
-                    val request = ImageRequest.Builder(context).data(url).size(KawarpBlur.SIZE).allowHardware(false).build()
+                    val request = ImageRequest.Builder(context).data(fr.lulu.unison.offline.OfflineArt[url] ?: url).size(KawarpBlur.SIZE).allowHardware(false).build()
                     val image = (loader.execute(request) as? SuccessResult)?.image ?: return@runCatching null
                     KawarpBlur.process(image.toBitmap()).asShader()
                 }.getOrNull()
