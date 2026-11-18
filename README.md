@@ -3,7 +3,7 @@
 # 🎧 Unison
 
 **Listen to the same music, at the same instant, on several phones.**
-A YouTube Music player with a shared queue and synced lyrics.
+A YouTube Music player with a shared queue, offline downloads and word-by-word lyrics.
 
 ![Android](https://img.shields.io/badge/Android-13%2B-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)
@@ -19,9 +19,32 @@ A YouTube Music player with a shared queue and synced lyrics.
 ### 🎵 A full music player
 - **YouTube Music inside the app**: search tracks, albums, artists and playlists, browse the home feed and charts. No account needed.
 - **Its own player** (Media3 ExoPlayer): notification, lock screen, headset and Bluetooth controls, background playback, on-device audio cache.
+- **Gapless playback**: the next track is prepared while the current one plays, so changing track never cuts the sound.
+- **Swipe the artwork** to skip to the next track or go back to the previous one.
+- **Smooth predictive back** for the player, the "Together" screen and navigation.
 - **Queue**: play next, add to queue, reorder, shuffle, repeat, and an automatic radio that keeps the music going.
-- **Library on the phone**: favourites, playlists, saved albums and listening history.
-- **Synced lyrics** from [LRCLIB](https://lrclib.net), then NetEase. Tap a line to jump to it.
+- **Library on the phone**: favourites, playlists, saved albums, followed artists and listening history.
+
+### 🎤 Word-by-word lyrics
+- Synced lyrics from [LRCLIB](https://lrclib.net) and NetEase. When the source gives word timings, each word (each character for CJK) lights up as it is sung.
+- Without word timings, the time of each line is spread over its characters, so the karaoke effect is always there.
+- Tap a line to jump to it. Lyrics of downloaded tracks work offline.
+
+### 📥 Offline listening
+- **Download** any track from its menu, or a whole favourites list, playlist or album.
+- Downloaded tracks play with no connection at all, airplane mode included, with their artwork and lyrics.
+- A small **download badge** marks downloaded tracks everywhere (library, favourites, playlists, history, search, queue, player); a progress ring shows downloads in progress.
+- A Downloads screen shows progress, lets you pause, resume and delete, and tells you how much space is used. An option restricts downloads to Wi-Fi.
+- Offline, the queue skips tracks that are not downloaded and jumps to the next available one.
+
+### 🔁 Import your library
+- Import a **CSV export** from another service (for example from [TuneMyMusic](https://www.tunemymusic.com), Deezer format included) from Settings or the Library.
+- Liked tracks go to your favourites, each playlist becomes a Unison playlist, artists become follows.
+- Tracks are matched through YouTube Music search. A final report lists what was imported, what was not found (with a manual search) and what was skipped. An interrupted import can be resumed.
+
+### ⭐ Followed artists
+- Follow artists from their page or through an import.
+- Your artists show up on the home screen with their latest releases and tracks, and the automatic **radio favours them** (adjustable in Settings).
 
 ### 🎧 Listen together
 - **Open your queue to friends** without stopping the music: show a QR code, they scan it and join.
@@ -50,12 +73,17 @@ A YouTube Music player with a shared queue and synced lyrics.
    └─────────────┬──────────────┘   commands   └──────────┬──────────┘
                  ▼                                        ▼
         PlaybackController ──▶ ExoPlayer ◀── stream resolved from YouTube Music
+                                  │
+                       downloads cache · audio cache
 ```
 
 - The same queue logic runs alone and together: alone, the phone is its own host.
 - **Playback anchor** (`PlayAnchor`): a track, a position and the host time at which that position was true.
-- **Sync** (`PlaybackController`, `SyncPolicy`): under 25 ms nothing, up to 150 ms a ±3 % speed nudge, beyond that a seek.
-- **Streams** are resolved by [InnerTubeX](https://github.com/MetrolistGroup/innertubex) just before playback.
+- **Sync** (`PlaybackController`, `SyncPolicy`): under 25 ms nothing, up to 150 ms a ±3 % speed nudge, beyond that a seek. Alone, the anchor follows the player instead.
+- **Gapless** (`Gapless`): ExoPlayer holds the current and the next track; the session switches to the prepared item instead of reloading.
+- **Streams** are resolved by [InnerTubeX](https://github.com/MetrolistGroup/innertubex) just before playback, fetched in bounded ranges, and read from the permanent downloads cache first (`offline/`).
+- **Library** (`library/`, `artists/`): Room database for favourites, playlists, history, downloads and followed artists.
+- **Import** (`importer/`): a RFC 4180 CSV parser with columns detected by header name, then a scored YouTube Music search per line.
 
 The app lives in [`v2/`](v2). The first version, which drove the Deezer app, is kept in `app/` for reference.
 
@@ -75,7 +103,7 @@ Download the latest APK from the [**Releases**](../../releases/latest) page, the
 ```bash
 git clone https://github.com/LuckyTheCookie/unison.git
 cd unison/v2
-./gradlew assembleDebug        # debug APK
+./gradlew assembleDebug        # debug APK (installs next to the release as fr.lulu.unison.dev)
 ./gradlew testDebugUnitTest    # unit tests
 ```
 
@@ -104,7 +132,7 @@ Without this file the build simply isn't signed with your key.
 
 ## 🧰 Tech stack
 
-Kotlin · Jetpack Compose · Media3 ExoPlayer · InnerTubeX · Room · Coroutines and Flow · kotlinx.serialization · Ktor/OkHttp · Java-WebSocket · Nearby Connections · CameraX and ML Kit · ZXing · Coil · DataStore
+Kotlin · Jetpack Compose · Media3 ExoPlayer (cache and downloads) · InnerTubeX · Room · Coroutines and Flow · kotlinx.serialization · Ktor/OkHttp · Java-WebSocket · Nearby Connections · CameraX and ML Kit · ZXing · Coil · DataStore
 
 Third-party notices: [`v2/THIRD_PARTY_NOTICES.md`](v2/THIRD_PARTY_NOTICES.md).
 
@@ -112,7 +140,7 @@ Third-party notices: [`v2/THIRD_PARTY_NOTICES.md`](v2/THIRD_PARTY_NOTICES.md).
 
 ## ⚠️ Disclaimer
 
-Unison is not affiliated with, nor endorsed by, YouTube or Google. It uses YouTube Music's private API, which may break without notice and whose use may be contrary to YouTube's terms of service.
+Unison is not affiliated with, nor endorsed by, YouTube or Google. It uses YouTube Music's private API, which may break without notice and whose use may be contrary to YouTube's terms of service. Downloads are meant for personal offline listening inside the app.
 
 ## 📄 License
 
