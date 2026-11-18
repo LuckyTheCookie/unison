@@ -65,13 +65,14 @@ class AppGraph(app: Application) {
         downloads.start()
         playback.start()
         autoQueue.start()
-        // Historique : chaque titre réellement lancé sur ce téléphone. Un titre sauté aussitôt (hors ligne et
-        // pas téléchargé, illisible) n'y entre pas.
+        // Historique : chaque titre réellement lancé sur ce téléphone. Un titre sauté aussitôt (illisible), ou
+        // jamais chargé (hors ligne et pas téléchargé), n'y entre pas.
         scope.launch {
             sessions.snapshot.map { it.anchor.item }.distinctUntilChangedBy { it?.uid }.collectLatest { item ->
                 if (item == null) return@collectLatest
                 delay(HISTORY_DELAY_MS)
-                if (sessions.listenHere.value) scope.launch(Dispatchers.IO) { library.recordPlay(item.track) }
+                val loaded = playback.state.value.loadedUid == item.uid
+                if (loaded && sessions.listenHere.value) scope.launch(Dispatchers.IO) { library.recordPlay(item.track) }
             }
         }
     }
