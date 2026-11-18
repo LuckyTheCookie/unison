@@ -20,7 +20,9 @@ import fr.lulu.unison.youtube.YouTubeEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.map
@@ -63,12 +65,20 @@ class AppGraph(app: Application) {
         downloads.start()
         playback.start()
         autoQueue.start()
-        // Historique : chaque titre réellement lancé sur ce téléphone.
+        // Historique : chaque titre réellement lancé sur ce téléphone. Un titre sauté aussitôt (hors ligne et
+        // pas téléchargé, illisible) n'y entre pas.
         scope.launch {
-            sessions.snapshot.map { it.anchor.item }.distinctUntilChangedBy { it?.uid }.collect { item ->
-                if (item != null && sessions.listenHere.value) launch(Dispatchers.IO) { library.recordPlay(item.track) }
+            sessions.snapshot.map { it.anchor.item }.distinctUntilChangedBy { it?.uid }.collectLatest { item ->
+                if (item == null) return@collectLatest
+                delay(HISTORY_DELAY_MS)
+                if (sessions.listenHere.value) scope.launch(Dispatchers.IO) { library.recordPlay(item.track) }
             }
         }
+    }
+
+    private companion object {
+        /** Temps passé sur un titre avant qu'il compte comme écouté. */
+        const val HISTORY_DELAY_MS = 2_000L
     }
 }
 
