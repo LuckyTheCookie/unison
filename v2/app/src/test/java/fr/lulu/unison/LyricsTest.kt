@@ -128,6 +128,15 @@ class KaraokeTest {
         assertEquals(lrc.text, lrc.words!!.joinToString("") { it.text })
     }
 
+    @Test fun fullWidthPunctuationIsNarrowedInLatinLines() {
+        val line = Lrc.parseYrc("[1000,3000](1000,500,0)au (1500,500,0)revoir (2000,500,0)（encore(2500,500,0)）").single()
+        assertEquals("au revoir (encore)", line.text)
+        assertEquals(line.text, line.words!!.joinToString("") { it.text })
+        // Une ligne en chinois garde sa ponctuation pleine chasse.
+        val cjk = Lrc.parseYrc("[1000,2000](1000,500,0)你好(1500,500,0)（世界）").single()
+        assertEquals("你好（世界）", cjk.text)
+    }
+
     @Test fun lyricsKeptOfflineByAnOlderVersionAreCleaned() {
         // Paroles gardées hors ligne avant la correction : respiration gardée comme espace doublée.
         val old = LyricLine(1_000, "un  deux ", listOf(LyricWord(1_000, 1_400, "un "), LyricWord(1_400, 1_600, " "), LyricWord(1_600, 2_000, "deux ")))

@@ -158,8 +158,12 @@ object Karaoke {
      * texte affiché. NetEase marque les respirations par un « mot » fait d'une espace : « dance  on the floor ».
      */
     fun trimmed(words: List<LyricWord>): List<LyricWord>? {
+        // Ponctuation pleine chasse (« （ » de NetEase) dans une ligne sans idéogramme : elle s'affiche avec de
+        // larges marges qui ressemblent à des espaces. Même nombre de caractères : le minutage ne bouge pas.
+        val latin = words.none { w -> w.text.any(::isCjk) }
         val list = mutableListOf<LyricWord>()
-        for (raw in words) {
+        for (source in words) {
+            val raw = if (latin) source.copy(text = halfWidth(source.text)) else source
             val w = if (raw.text.length > 1) raw.copy(text = raw.text.replace(spaces, " ")) else raw
             val afterSpace = list.lastOrNull()?.text?.lastOrNull()?.isWhitespace() == true
             when {
@@ -176,6 +180,22 @@ object Karaoke {
         list[0] = list[0].copy(text = list[0].text.trimStart())
         list[list.lastIndex] = list.last().copy(text = list.last().text.trimEnd())
         return list
+    }
+
+    private fun isCjk(c: Char): Boolean = Character.UnicodeScript.of(c.code).let {
+        it == Character.UnicodeScript.HAN || it == Character.UnicodeScript.HIRAGANA ||
+            it == Character.UnicodeScript.KATAKANA || it == Character.UnicodeScript.HANGUL
+    }
+
+    /** Caractères ASCII pleine chasse (U+FF01 à U+FF5E) et espace idéographique ramenés à leur forme normale. */
+    private fun halfWidth(text: String): String = buildString(text.length) {
+        for (c in text) append(
+            when (c) {
+                in '\uFF01'..'\uFF5E' -> c - 0xFEE0
+                '\u3000' -> ' '
+                else -> c
+            },
+        )
     }
 
     /**
