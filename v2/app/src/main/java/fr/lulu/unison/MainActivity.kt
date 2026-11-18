@@ -331,7 +331,10 @@ private fun MiniPlayer(vm: AppViewModel, track: Track, playing: Boolean, backdro
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(track.title, style = Type.Row, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(player.error ?: track.artist, style = Type.Body, color = if (player.error != null) Ink.Danger else Ink.Secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (player.error == null) fr.lulu.unison.ui.components.DownloadBadge(LocalDownloads.current[track.id])
+                    Text(player.error ?: track.artist, style = Type.Body, color = if (player.error != null) Ink.Danger else Ink.Secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
             if (player.buffering && playing) Box(Modifier.width(44.dp), contentAlignment = Alignment.Center) { Spinner(size = 22.dp) }
             else IconBtn(if (playing) R.drawable.ic_pause_fill else R.drawable.ic_play_fill, if (playing) "Pause" else "Lecture", vm::togglePlay, iconSize = 26.dp)

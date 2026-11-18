@@ -605,7 +605,10 @@ private fun QueueRow(item: QueueItem, snap: SessionSnapshot, dragging: Boolean, 
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(item.track.title, style = Type.Row, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(listOfNotNull(item.track.artist, by).joinToString(" • "), style = Type.Body, color = Ink.Tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                DownloadBadge(LocalDownloads.current[item.track.id])
+                Text(listOfNotNull(item.track.artist, by).joinToString(" • "), style = Type.Body, color = Ink.Tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         IconBtn(R.drawable.ic_close_line, "Retirer", onRemove, size = 40.dp, iconSize = 18.dp, tint = Ink.Tertiary)
         Box(handle.size(44.dp), contentAlignment = Alignment.Center) { Glyph(R.drawable.ic_handle_line, tint = Ink.Tertiary, size = 20.dp) }
