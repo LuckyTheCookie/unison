@@ -79,6 +79,16 @@ data class DownloadRow(
     val addedAt: Long,
 )
 
+/** Artiste suivi : ses titres nourrissent l'accueil et la radio. */
+@Entity(tableName = "subscription", primaryKeys = ["browseId"])
+data class SubscriptionRow(
+    /** Identifiant de la page de l'artiste sur YouTube Music (chaîne « UC… »). */
+    val browseId: String,
+    val name: String,
+    val thumbnail: String,
+    val addedAt: Long,
+)
+
 object DownloadState {
     const val QUEUED = 0
     const val DOWNLOADING = 1
@@ -204,11 +214,23 @@ interface LibraryDao {
     @Query("DELETE FROM download WHERE trackId = :id")
     suspend fun deleteDownload(id: String)
 
+    @Query("SELECT * FROM subscription ORDER BY addedAt DESC")
+    fun subscriptions(): Flow<List<SubscriptionRow>>
+
+    @Query("SELECT * FROM subscription ORDER BY addedAt DESC")
+    suspend fun allSubscriptions(): List<SubscriptionRow>
+
+    /** Un artiste déjà suivi garde sa date d'abonnement. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun subscribe(rows: List<SubscriptionRow>)
+
+    @Query("DELETE FROM subscription WHERE browseId = :browseId")
+    suspend fun unsubscribe(browseId: String)
 }
 
 @Database(
-    entities = [FavoriteRow::class, HistoryRow::class, PlaylistRow::class, PlaylistTrackRow::class, SavedRow::class, DownloadRow::class],
-    version = 2,
+    entities = [FavoriteRow::class, HistoryRow::class, PlaylistRow::class, PlaylistTrackRow::class, SavedRow::class, DownloadRow::class, SubscriptionRow::class],
+    version = 3,
     exportSchema = false,
 )
 abstract class LibraryDb : RoomDatabase() {
@@ -229,7 +251,17 @@ object LibraryMigrations {
         }
     }
 
-    val ALL = arrayOf(V1_V2)
+    /** 2.1 : artistes suivis. */
+    val V2_V3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `subscription` (`browseId` TEXT NOT NULL, `name` TEXT NOT NULL, " +
+                    "`thumbnail` TEXT NOT NULL, `addedAt` INTEGER NOT NULL, PRIMARY KEY(`browseId`))",
+            )
+        }
+    }
+
+    val ALL = arrayOf(V1_V2, V2_V3)
 }
 
 /** Favoris, playlists et historique : tout reste sur le téléphone, sans compte. */
@@ -295,6 +327,19 @@ class Library(context: Context, private val now: () -> Long = System::currentTim
         dao.insertDownloads(fresh.mapIndexed { i, tr -> DownloadRow(tr.toCols(), DownloadState.QUEUED, 0, 0, 0, null, t - i) })
         return fresh
     }
+
+    // --- Abonnements ---
+
+    val subscriptions: Flow<List<SubscriptionRow>> = dao.subscriptions()
+    suspend fun allSubscriptions(): List<SubscriptionRow> = dao.allSubscriptions()
+
+    /** Suit ces artistes ; le premier de la liste devient le plus récent. */
+    suspend fun subscribe(rows: List<SubscriptionRow>) {
+        val t = now()
+        dao.subscribe(rows.distinctBy { it.browseId }.mapIndexed { i, r -> r.copy(addedAt = t - i) })
+    }
+
+    suspend fun unsubscribe(browseId: String) = dao.unsubscribe(browseId)
 
     suspend fun setDownloadState(id: String, state: Int, bytes: Long, total: Long) = dao.setDownloadState(id, state, bytes, total)
     suspend fun setDownloadFormat(id: String, itag: Int, loudnessDb: Double?) = dao.setDownloadFormat(id, itag, loudnessDb)

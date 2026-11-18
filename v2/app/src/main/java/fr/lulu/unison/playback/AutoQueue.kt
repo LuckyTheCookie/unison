@@ -1,6 +1,8 @@
 package fr.lulu.unison.playback
 
 import android.util.Log
+import fr.lulu.unison.artists.RadioMix
+import fr.lulu.unison.artists.Subscriptions
 import fr.lulu.unison.model.RepeatMode
 import fr.lulu.unison.session.Cmd
 import fr.lulu.unison.session.SessionManager
@@ -11,12 +13,16 @@ import kotlinx.coroutines.launch
 
 /**
  * Radio automatique : quand la file locale arrive au bout, on la prolonge avec des titres proches
- * de celui qui joue. C'est l'hôte qui s'en charge, les invités reçoivent la file comme d'habitude.
+ * de celui qui joue, et (si on le souhaite) environ un sur quatre d'un artiste suivi.
+ * C'est l'hôte qui s'en charge, les invités reçoivent la file comme d'habitude.
  */
 class AutoQueue(
     private val sessions: SessionManager,
     private val catalog: MusicCatalog,
     private val scope: CoroutineScope,
+    private val subscriptions: Subscriptions? = null,
+    /** « Privilégier mes artistes » (réglages). */
+    private val preferMyArtists: () -> Boolean = { false },
 ) {
     private var lastSeedUid: String? = null
 
@@ -28,10 +34,13 @@ class AutoQueue(
                 if (current.uid == lastSeedUid) return@collectLatest
                 lastSeedUid = current.uid
                 val known = (s.history.map { it.track.id } + current.track.id).toSet()
-                val tracks = runCatching { catalog.radio(current.track.id) }
+                val radio = runCatching { catalog.radio(current.track.id) }
                     .onFailure { Log.w("UnisonRadio", "radio indisponible (${it::class.simpleName})"); lastSeedUid = null }
                     .getOrNull().orEmpty()
-                    .filter { it.id !in known }.take(BATCH)
+                val mine = if (subscriptions != null && preferMyArtists() && radio.isNotEmpty()) {
+                    runCatching { subscriptions.radioPicks(current.track, radio, known, BATCH / MINE_EVERY) }.getOrDefault(emptyList())
+                } else emptyList()
+                val tracks = RadioMix.mix(radio, mine, known, BATCH, MINE_EVERY)
                 if (tracks.isNotEmpty()) sessions.local.send(Cmd.AddTracks(tracks, auto = true))
             }
         }
@@ -39,5 +48,7 @@ class AutoQueue(
 
     private companion object {
         const val BATCH = 20
+        /** Un titre sur quatre vient d'un artiste suivi. */
+        const val MINE_EVERY = 4
     }
 }

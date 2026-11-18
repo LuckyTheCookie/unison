@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,6 +48,7 @@ import fr.lulu.unison.ui.components.pressable
 import fr.lulu.unison.ui.theme.Ink
 import fr.lulu.unison.ui.theme.Radius
 import fr.lulu.unison.ui.theme.Type
+import fr.lulu.unison.youtube.ArtistItem
 
 /** Pochette générée pour les listes locales : un dégradé sombre et un pictogramme. */
 @Composable
@@ -69,6 +71,7 @@ fun LibraryScreen(vm: AppViewModel) {
     val playlists by vm.playlists.collectAsState()
     val saved by vm.saved.collectAsState()
     val downloads by vm.downloadRows.collectAsState()
+    val artists by vm.subscribed.collectAsState()
     var creating by remember { mutableStateOf(false) }
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {
@@ -97,6 +100,16 @@ fun LibraryScreen(vm: AppViewModel) {
         items(playlists, key = { "p${it.pid}" }) { p ->
             LibraryRow(p.name, plural(p.count, "titre"), onClick = { nav.playlist(p.pid) }) {
                 if (p.cover.isNullOrBlank()) GeneratedCover(R.drawable.ic_queue_line, PlaylistColors, 54.dp) else Cover(p.cover, 54.dp, shape = Radius.Control)
+            }
+        }
+        if (artists.isNotEmpty()) {
+            item {
+                SectionHeader("Artistes")
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(artists, key = { it.browseId }) { a ->
+                        ItemCard(ArtistItem(a.browseId, a.name, "", a.thumbnail), onClick = { nav.artist(a.browseId) }, width = 96.dp)
+                    }
+                }
             }
         }
         if (saved.isNotEmpty()) {

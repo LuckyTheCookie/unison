@@ -22,6 +22,8 @@ data class Settings(
     val animatedBackground: Boolean = true,
     /** Les téléchargements attendent le Wi-Fi (ou un réseau non facturé). */
     val downloadWifiOnly: Boolean = true,
+    /** La radio automatique glisse des titres des artistes suivis. */
+    val preferMyArtists: Boolean = true,
 )
 
 private val Context.store by preferencesDataStore("profile")
@@ -36,6 +38,7 @@ class Prefs(private val context: Context) {
     private val kNormalize = booleanPreferencesKey("normalize")
     private val kAnimated = booleanPreferencesKey("animated_bg")
     private val kWifiOnly = booleanPreferencesKey("download_wifi_only")
+    private val kMyArtists = booleanPreferencesKey("prefer_my_artists")
 
     val profile: Flow<Profile> = context.store.data.map { p ->
         Profile(p[kId] ?: "", p[kName]?.ifBlank { null } ?: defaultName(), p[kColor] ?: AvatarColors[5])
@@ -48,6 +51,7 @@ class Prefs(private val context: Context) {
             normalizeVolume = p[kNormalize] ?: true,
             animatedBackground = p[kAnimated] ?: true,
             downloadWifiOnly = p[kWifiOnly] ?: true,
+            preferMyArtists = p[kMyArtists] ?: true,
         )
     }
 
@@ -73,6 +77,7 @@ class Prefs(private val context: Context) {
     suspend fun setNormalize(on: Boolean) { context.store.edit { it[kNormalize] = on } }
     suspend fun setAnimatedBackground(on: Boolean) { context.store.edit { it[kAnimated] = on } }
     suspend fun setDownloadWifiOnly(on: Boolean) { context.store.edit { it[kWifiOnly] = on } }
+    suspend fun setPreferMyArtists(on: Boolean) { context.store.edit { it[kMyArtists] = on } }
 
     private fun defaultName(): String = Build.MODEL?.take(24)?.ifBlank { null } ?: "Mon téléphone"
 }

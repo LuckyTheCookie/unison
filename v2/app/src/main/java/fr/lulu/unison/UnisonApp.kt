@@ -4,6 +4,7 @@ import android.app.Application
 import fr.lulu.unison.data.Prefs
 import fr.lulu.unison.data.Settings
 import androidx.media3.database.StandaloneDatabaseProvider
+import fr.lulu.unison.artists.Subscriptions
 import fr.lulu.unison.importer.Importer
 import fr.lulu.unison.library.Library
 import fr.lulu.unison.offline.Connectivity
@@ -54,8 +55,9 @@ class AppGraph(app: Application) {
     val downloads = Downloads(app, http, youtube, library, lyrics, prefs, mediaDb, scope)
     val playback = PlaybackController(app, sessions, youtube, prefs, http, mediaDb, downloads, connectivity)
     val updates = UpdateManager(app, http)
-    val importer = Importer(app, library, catalog, scope)
-    private val autoQueue = AutoQueue(sessions, catalog, scope)
+    val subscriptions = Subscriptions(library, catalog, scope)
+    val importer = Importer(app, library, catalog, scope, followArtists = subscriptions::importArtists)
+    private val autoQueue = AutoQueue(sessions, catalog, scope, subscriptions) { settings.value.preferMyArtists }
 
     fun start() {
         downloads.start()

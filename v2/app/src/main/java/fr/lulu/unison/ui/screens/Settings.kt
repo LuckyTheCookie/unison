@@ -106,6 +106,8 @@ fun SettingsScreen(vm: AppViewModel) {
                 Divider()
                 SwitchRow("Égaliser le volume", "Ramène les titres trop forts au même niveau que les autres", settings.normalizeVolume) { vm.setNormalize(!settings.normalizeVolume) }
                 Divider()
+                SwitchRow("Privilégier mes artistes", "La radio automatique glisse environ un titre sur quatre de tes artistes suivis", settings.preferMyArtists) { vm.setPreferMyArtists(!settings.preferMyArtists) }
+                Divider()
                 Text("Titres gardés sur le téléphone", style = Type.Row, color = Ink.Primary)
                 Text("Un titre déjà écouté se relance sans le retélécharger. Pris en compte au prochain lancement.", style = Type.Caption, color = Ink.Tertiary)
                 Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

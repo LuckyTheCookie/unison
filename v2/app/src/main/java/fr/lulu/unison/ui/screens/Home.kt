@@ -47,6 +47,9 @@ import fr.lulu.unison.ui.components.pressable
 import fr.lulu.unison.ui.theme.Ink
 import fr.lulu.unison.ui.theme.Radius
 import fr.lulu.unison.ui.theme.Type
+import fr.lulu.unison.youtube.ArtistItem
+import fr.lulu.unison.youtube.Section
+import fr.lulu.unison.youtube.SongItem
 import java.util.Calendar
 
 private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
@@ -62,6 +65,7 @@ fun HomeScreen(vm: AppViewModel) {
     val history by vm.history.collectAsState()
     val snap by vm.snapshot.collectAsState()
     val join by vm.joinInfo.collectAsState()
+    val artistFeed by vm.artistFeed.collectAsState()
     val hello = remember { greeting() }
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {
@@ -81,6 +85,19 @@ fun HomeScreen(vm: AppViewModel) {
                     items(recent, key = { it.id }) { track -> RecentCard(track, onClick = { vm.play(recent, recent.indexOf(track)) }, onLong = { nav.trackMenu(track) }) }
                 }
             }
+        }
+
+        artistFeed?.let { feed ->
+            item(key = "mine") {
+                SectionHeader("Tes artistes")
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(feed.artists, key = { it.browseId }) { a ->
+                        ItemCard(ArtistItem(a.browseId, a.name, "", a.thumbnail), onClick = { nav.artist(a.browseId) }, width = 92.dp)
+                    }
+                }
+            }
+            if (feed.popular.size >= 3) item(key = "mine-songs") { SectionBlock(Section("Titres de tes artistes", feed.popular.map { SongItem(it) }), vm) }
+            if (feed.releases.isNotEmpty()) item(key = "mine-new") { SectionBlock(Section("Sorties de tes artistes", feed.releases), vm) }
         }
 
         when (val h = home) {

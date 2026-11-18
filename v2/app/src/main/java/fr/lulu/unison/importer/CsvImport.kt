@@ -1,6 +1,7 @@
 package fr.lulu.unison.importer
 
 import fr.lulu.unison.model.Track
+import fr.lulu.unison.youtube.ArtistItem
 import java.text.Normalizer
 
 /**
@@ -247,6 +248,14 @@ object ImportMatch {
             }
         }
         return total.takeIf { it >= 0.6 }
+    }
+
+    /** L'artiste [name] parmi les résultats d'une recherche d'artistes : même nom, sinon nom qui le contient. */
+    fun bestArtist(name: String, candidates: List<ArtistItem>): ArtistItem? {
+        val n = norm(name)
+        if (n.isEmpty()) return null
+        candidates.firstOrNull { norm(it.title) == n }?.let { return it }
+        return candidates.firstOrNull { c -> norm(c.title).let { t -> t.length >= 4 && n.length >= 4 && (t.contains(n) || n.contains(t)) } }
     }
 
     /** Meilleur candidat, ou null si aucun n'est assez proche. */

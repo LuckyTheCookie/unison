@@ -8,7 +8,9 @@ import fr.lulu.unison.UnisonApp
 import fr.lulu.unison.data.Profile
 import fr.lulu.unison.importer.ImportEntry
 import fr.lulu.unison.importer.ImportUi
+import fr.lulu.unison.artists.ArtistFeed
 import fr.lulu.unison.library.DownloadRow
+import fr.lulu.unison.library.SubscriptionRow
 import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.library.PlaylistSummary
 import fr.lulu.unison.offline.DownloadStatus
@@ -31,7 +33,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
@@ -209,6 +213,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun downloadSpace(): Pair<Long, Long> = downloads.spaceBytes() to downloads.freeBytes()
     fun setDownloadWifiOnly(on: Boolean) = viewModelScope.launch { graph.prefs.setDownloadWifiOnly(on) }
 
+    // --- Artistes suivis ---
+
+    private val subscriptions = graph.subscriptions
+    val subscribedIds: StateFlow<Set<String>> = subscriptions.ids
+    val subscribed: StateFlow<List<SubscriptionRow>> = subscriptions.list.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val _artistFeed = MutableStateFlow<ArtistFeed?>(null)
+    /** Section « Tes artistes » de l'accueil ; null tant qu'elle n'est pas chargée (ou sans abonnement). */
+    val artistFeed: StateFlow<ArtistFeed?> = _artistFeed.asStateFlow()
+
+    fun toggleSubscription(browseId: String, name: String, thumbnail: String) = viewModelScope.launch {
+        if (browseId in subscribedIds.value) {
+            subscriptions.unsubscribe(browseId); toast("Tu ne suis plus $name")
+        } else {
+            subscriptions.subscribe(browseId, name, thumbnail); toast("Tu suis $name")
+        }
+    }
+
+    private fun loadArtistFeed() = viewModelScope.launch {
+        _artistFeed.value = runCatching { subscriptions.feed() }.getOrNull()?.takeIf { it.artists.isNotEmpty() }
+    }
+
+    fun setPreferMyArtists(on: Boolean) = viewModelScope.launch { graph.prefs.setPreferMyArtists(on) }
+
     // --- Import ---
 
     private val importer = graph.importer
@@ -350,6 +378,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     init {
         if (!BuildConfig.DEBUG) { updates.clean(); updates.check() }
         loadHome()
+        // Le fil des artistes suivis se recharge quand la liste change (abonnement, import).
+        viewModelScope.launch {
+            subscriptions.ids.drop(1).collectLatest { delay(800); loadArtistFeed() }
+        }
+        loadArtistFeed()
     }
 
     private companion object {

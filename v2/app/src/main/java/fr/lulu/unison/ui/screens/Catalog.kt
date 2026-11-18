@@ -261,6 +261,7 @@ fun ArtistScreen(browseId: String, vm: AppViewModel) {
         value = vm.artist(browseId)
     }
     val snap by vm.snapshot.collectAsState()
+    val subscribed by vm.subscribedIds.collectAsState()
     Box(Modifier.fillMaxSize()) {
         LoadBox(load, onRetry = { attempt++ }) { page ->
             LazyColumn(contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {
@@ -271,6 +272,10 @@ fun ArtistScreen(browseId: String, vm: AppViewModel) {
                         Column(Modifier.align(Alignment.BottomStart).padding(20.dp)) {
                             Text(page.name, style = Type.Hero.copy(fontSize = Type.Hero.fontSize * 1.25f, lineHeight = Type.Hero.lineHeight * 1.2f), color = Ink.Primary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             if (page.listeners.isNotBlank()) Text(page.listeners, style = Type.Label, color = Ink.Secondary, modifier = Modifier.padding(top = 4.dp))
+                            val following = browseId in subscribed
+                            Spacer(Modifier.height(12.dp))
+                            if (following) GlassButton("Abonné", { vm.toggleSubscription(browseId, page.name, page.thumbnail) }, icon = R.drawable.ic_check_line, tint = Ink.Accent)
+                            else PrimaryButton("S'abonner", { vm.toggleSubscription(browseId, page.name, page.thumbnail) }, icon = R.drawable.ic_user_add_line)
                         }
                     }
                 }
