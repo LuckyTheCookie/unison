@@ -48,6 +48,19 @@ import java.util.concurrent.Executors
 /** État d'un titre téléchargé, tel que l'affichent les listes. */
 data class DownloadStatus(val state: Int, val progress: Float) {
     val done: Boolean get() = state == DownloadState.DONE
+
+    companion object {
+        /** État d'une ligne de la base, avec l'avancement [live] du téléchargement en cours s'il est connu. */
+        fun of(row: DownloadRow, live: Float?): DownloadStatus {
+            val p = when {
+                row.state == DownloadState.DONE -> 1f
+                live != null -> live
+                row.totalBytes > 0 -> row.bytes.toFloat() / row.totalBytes
+                else -> 0f
+            }
+            return DownloadStatus(row.state, p.coerceIn(0f, 1f))
+        }
+    }
 }
 
 /**
@@ -119,16 +132,7 @@ class Downloads(
 
     /** État de chaque titre téléchargé ou en cours, par identifiant. */
     val status: StateFlow<Map<String, DownloadStatus>> = combine(library.downloads, progress) { rows, live ->
-        rows.associate { r ->
-            val id = r.track.trackId
-            val p = when {
-                r.state == DownloadState.DONE -> 1f
-                live[id] != null -> live[id]!!
-                r.totalBytes > 0 -> r.bytes.toFloat() / r.totalBytes
-                else -> 0f
-            }
-            id to DownloadStatus(r.state, p.coerceIn(0f, 1f))
-        }
+        rows.associate { r -> r.track.trackId to DownloadStatus.of(r, live[r.track.trackId]) }
     }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
     fun start() {
@@ -215,14 +219,7 @@ class Downloads(
 
     private fun changed(d: Download) {
         val id = d.request.id
-        val state = when (d.state) {
-            Download.STATE_QUEUED -> if (d.stopReason != Download.STOP_REASON_NONE) DownloadState.PAUSED else DownloadState.QUEUED
-            Download.STATE_STOPPED -> DownloadState.PAUSED
-            Download.STATE_DOWNLOADING -> DownloadState.DOWNLOADING
-            Download.STATE_COMPLETED -> DownloadState.DONE
-            Download.STATE_FAILED -> DownloadState.FAILED
-            else -> return
-        }
+        val state = stateOf(d.state, d.stopReason) ?: return
         if (state == DownloadState.FAILED && retried.add(id)) {
             // Souvent une adresse de flux périmée : on la redemande une fois avant d'abandonner.
             streams.invalidate(id)
@@ -275,5 +272,18 @@ class Downloads(
 
         /** Clé de cache d'un titre téléchargé : stable, quel que soit le format du flux. */
         fun cacheKey(id: String) = "$KEY_PREFIX$id"
+
+        /**
+         * État affiché d'un téléchargement d'après celui du gestionnaire de Media3 ; null pour les états
+         * transitoires (suppression, redémarrage) qui ne changent rien à l'écran.
+         */
+        fun stateOf(media3State: Int, stopReason: Int): Int? = when (media3State) {
+            Download.STATE_QUEUED -> if (stopReason != Download.STOP_REASON_NONE) DownloadState.PAUSED else DownloadState.QUEUED
+            Download.STATE_STOPPED -> DownloadState.PAUSED
+            Download.STATE_DOWNLOADING -> DownloadState.DOWNLOADING
+            Download.STATE_COMPLETED -> DownloadState.DONE
+            Download.STATE_FAILED -> DownloadState.FAILED
+            else -> null
+        }
     }
 }
