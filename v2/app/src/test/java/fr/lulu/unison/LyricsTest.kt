@@ -105,24 +105,24 @@ class KaraokeTest {
     @Test fun parsesNeteaseYrc() {
         val yrc = """
             {"t":0,"c":[{"tx":"作曲: "},{"tx":"Pharrell Williams"}]}
-            [31420,2670](31420,390,0)Like (31810,150,0)the (31960,630,0)legend (32590,150,0)of (32740,120,0)the (32860,1230,0)Phoenix
-            [35980,2250](35980,300,0)All (36280,360,0)ends (36640,210,0)with (36850,1380,0)beginnings
+            [31420,2670](31420,390,0)Le (31810,150,0)vent (31960,630,0)souffle (32590,150,0)sur (32740,120,0)la (32860,1230,0)plaine
+            [35980,2250](35980,300,0)Tout (36280,360,0)finit (36640,210,0)par (36850,1380,0)recommencer
         """.trimIndent()
         val lines = Lrc.parseYrc(yrc)
         assertEquals(2, lines.size)
-        assertEquals("Like the legend of the Phoenix", lines[0].text)
+        assertEquals("Le vent souffle sur la plaine", lines[0].text)
         assertEquals(31_420L, lines[0].timeMs)
-        assertEquals(LyricWord(31_960, 32_590, "legend "), lines[0].words!![2])
-        assertEquals("Phoenix", lines[0].words!!.last().text)
+        assertEquals(LyricWord(31_960, 32_590, "souffle "), lines[0].words!![2])
+        assertEquals("plaine", lines[0].words!!.last().text)
     }
 
     @Test fun breathsDoNotDoubleSpaces() {
-        // Cas réel (NetEase, « Billie Jean ») : des « mots » faits d'une espace marquent les respirations.
-        val line = Lrc.parseYrc("[63150,3000](63150,180,0)Who (63330,120,0)will (63450,600,0)dance (64050,180,0) (64230,150,0) on (64380,90,0)the (64470,330,0)floor (64800,540,0) (65340,300,0)round").single()
-        assertEquals("Who will dance on the floor round", line.text)
+        // Structure réelle d'une réponse NetEase : des « mots » faits d'une espace marquent les respirations.
+        val line = Lrc.parseYrc("[63150,3000](63150,180,0)Qui (63330,120,0)va (63450,600,0)marcher (64050,180,0) (64230,150,0) sur (64380,90,0)le (64470,330,0)chemin (64800,540,0) (65340,300,0)loin").single()
+        assertEquals("Qui va marcher sur le chemin loin", line.text)
         assertEquals(line.text, line.words!!.joinToString("") { it.text })
-        // La respiration après « dance » est retirée : le remplissage s'arrête simplement en attendant « on ».
-        assertEquals(listOf(63_450L, 64_230L), line.words!!.filter { it.text.trim() in setOf("dance", "on") }.map { it.startMs })
+        // La respiration après « marcher » est retirée : le remplissage s'arrête simplement en attendant « sur ».
+        assertEquals(listOf(63_450L, 64_230L), line.words!!.filter { it.text.trim() in setOf("marcher", "sur") }.map { it.startMs })
         val lrc = Lrc.parse("[00:01.00]<00:01.00>Un  <00:01.50> <00:02.00>deux<00:03.00>").single()
         assertEquals("Un deux", lrc.text)
         assertEquals(lrc.text, lrc.words!!.joinToString("") { it.text })
