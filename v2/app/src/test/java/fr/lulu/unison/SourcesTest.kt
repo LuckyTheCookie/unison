@@ -214,6 +214,11 @@ class SourceResolverTest {
         assertEquals("${SourceIds.YOUTUBE}:ytSweet0001", gone.cacheKey)
         addon.fail = true
         assertEquals(SourceIds.YOUTUBE, resolver().resolve(TrackRef.of(srcTrack)).sourceId)
+        // À plusieurs : le même enregistrement sur YouTube Music d'abord, même pour qui a la source.
+        addon.fail = false
+        assertEquals(SourceIds.YOUTUBE, resolver(shared = true).resolve(TrackRef.of(srcTrack)).sourceId)
+        val onlyInSource = Track("src:s1::hr/1", "Sweet Dreams (Are Made of This) - Remastered", "Eurythmics", durationMs = 300_000)
+        assertEquals("s1", resolver(shared = true).resolve(TrackRef.of(onlyInSource)).sourceId)
         val unknown = Track("src:s9::x", "Introuvable", "Personne", durationMs = 1_000)
         assertTrue(runCatching { resolver().resolve(TrackRef.of(unknown)) }.exceptionOrNull() is fr.lulu.unison.source.StreamUnavailableException)
     }

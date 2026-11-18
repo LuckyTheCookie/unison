@@ -37,7 +37,8 @@ class ImportedSource(val source: MusicSource, val allowDownloads: Boolean)
  * - Titre YouTube Music, avec une source importée choisie : le même enregistrement est cherché dans la source
  *   ([TrackMatcher]) ; s'il n'y est pas, ou si la source tarde, YouTube Music le joue (repli).
  * - Écoute à plusieurs : les titres YouTube restent sur YouTube pour que tous les téléphones jouent exactement
- *   le même enregistrement (la synchronisation en dépend).
+ *   le même enregistrement (la synchronisation en dépend) ; un titre d'une source importée y est d'abord cherché
+ *   sur YouTube Music, et ne vient de la source que s'il n'y est pas.
  * - « Économie de données » : pas de substitution (les sources importées visent la haute qualité).
  */
 class SourceResolver(
@@ -63,6 +64,12 @@ class SourceResolver(
         if (src != null) {
             val (configId, trackId) = src
             val imp = imported(configId)
+            // À plusieurs, chacun cherche d'abord le même enregistrement sur YouTube Music : tous les téléphones,
+            // qu'ils aient ou non cette source, jouent alors le même fichier et restent synchronisés.
+            if (shared() && purpose == StreamResolver.Purpose.PLAY) {
+                attempt(budget) { matchIn(youtube, SourceIds.YOUTUBE, ref, budget)?.let { id -> youtube.stream(id, request)?.let { id to it } } }
+                    ?.let { (id, info) -> return served(ref.id, youtube, id, info) }
+            }
             if (imp != null && (purpose == StreamResolver.Purpose.PLAY || imp.allowDownloads)) {
                 attempt(budget) { imp.source.stream(trackId, request) }?.let { return served(ref.id, imp.source, trackId, it) }
             }

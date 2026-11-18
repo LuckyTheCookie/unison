@@ -296,6 +296,24 @@ class ProtocolTest {
         // Un Hello de la v1 n'annonce pas de version : il vaut 1 et sera refusé par l'hôte.
         assertEquals(1, (decodeMsg("""{"t":"hello","deviceId":"d","name":"n","color":1,"secret":"s"}""") as Msg.Hello).v)
     }
+
+    /**
+     * Titres d'une source importée dans une session : rien ne change dans le protocole (même [JoinInfo.PROTOCOL]),
+     * seul l'identifiant porte la source ; aucune adresse de flux n'est envoyée.
+     */
+    @Test fun sourceTracksTravelAsPlainTracks() {
+        val src = Track("src:s0123456789::album/7", "Titre", "Artiste", "Album", "https://img.example.test/c.jpg", 201_000)
+        val logic = SessionLogic(now = { 1_000 }, newUid = { "u1" })
+        val s = logic.apply(SessionSnapshot(members = listOf(Member("h", "Hôte", 1, isHost = true))), Cmd.AddTrack(src), "h")
+        val text = Msg.State(s).encode()
+        assertEquals(Msg.State(s), decodeMsg(text))
+        assertFalse(text.contains("example.test/stream"))
+        assertEquals(src, (decodeMsg(text) as Msg.State).snapshot.anchor.item?.track)
+        // Un champ inconnu (version future) est ignoré plutôt que de casser la session.
+        val future = text.replace("\"title\":\"Titre\"", "\"title\":\"Titre\",\"src\":\"x\"")
+        assertEquals(src, (decodeMsg(future) as Msg.State).snapshot.anchor.item?.track)
+        assertEquals(3, JoinInfo.PROTOCOL)
+    }
 }
 
 class ClockSyncTest {

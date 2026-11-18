@@ -2,7 +2,12 @@ package fr.lulu.unison.model
 
 import kotlinx.serialization.Serializable
 
-/** Un titre YouTube Music ; [id] est l'identifiant de la vidéo. */
+/**
+ * Un titre. [id] est l'identifiant YouTube Music de la vidéo, ou `src:<source>::<titre>` pour un titre trouvé
+ * dans une source importée (voir [fr.lulu.unison.source.SourceTrackId]). Dans une session partagée, l'identifiant
+ * de source est le même sur tous les téléphones qui ont ajouté la même adresse ; les autres retrouvent le titre
+ * sur YouTube Music d'après son titre, son artiste et sa durée. Aucune adresse de flux ne transite par la session.
+ */
 @Serializable
 data class Track(
     val id: String,
