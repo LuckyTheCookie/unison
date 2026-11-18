@@ -264,8 +264,18 @@ object LibraryMigrations {
     val ALL = arrayOf(V1_V2, V2_V3)
 }
 
+/** Ce dont les abonnements ont besoin de la bibliothèque (une version en mémoire sert aux tests). */
+interface SubscriptionStore {
+    val subscriptions: Flow<List<SubscriptionRow>>
+    suspend fun allSubscriptions(): List<SubscriptionRow>
+
+    /** Suit ces artistes ; le premier de la liste devient le plus récent, un artiste déjà suivi garde sa date. */
+    suspend fun subscribe(rows: List<SubscriptionRow>)
+    suspend fun unsubscribe(browseId: String)
+}
+
 /** Favoris, playlists et historique : tout reste sur le téléphone, sans compte. */
-class Library(context: Context, private val now: () -> Long = System::currentTimeMillis) {
+class Library(context: Context, private val now: () -> Long = System::currentTimeMillis) : SubscriptionStore {
     private val dao = Room.databaseBuilder(context, LibraryDb::class.java, "library.db")
         .addMigrations(*LibraryMigrations.ALL)
         .build().dao()
@@ -330,16 +340,15 @@ class Library(context: Context, private val now: () -> Long = System::currentTim
 
     // --- Abonnements ---
 
-    val subscriptions: Flow<List<SubscriptionRow>> = dao.subscriptions()
-    suspend fun allSubscriptions(): List<SubscriptionRow> = dao.allSubscriptions()
+    override val subscriptions: Flow<List<SubscriptionRow>> = dao.subscriptions()
+    override suspend fun allSubscriptions(): List<SubscriptionRow> = dao.allSubscriptions()
 
-    /** Suit ces artistes ; le premier de la liste devient le plus récent. */
-    suspend fun subscribe(rows: List<SubscriptionRow>) {
+    override suspend fun subscribe(rows: List<SubscriptionRow>) {
         val t = now()
         dao.subscribe(rows.distinctBy { it.browseId }.mapIndexed { i, r -> r.copy(addedAt = t - i) })
     }
 
-    suspend fun unsubscribe(browseId: String) = dao.unsubscribe(browseId)
+    override suspend fun unsubscribe(browseId: String) = dao.unsubscribe(browseId)
 
     suspend fun setDownloadState(id: String, state: Int, bytes: Long, total: Long) = dao.setDownloadState(id, state, bytes, total)
     suspend fun setDownloadFormat(id: String, itag: Int, loudnessDb: Double?) = dao.setDownloadFormat(id, itag, loudnessDb)

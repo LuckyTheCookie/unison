@@ -3,7 +3,7 @@ package fr.lulu.unison.artists
 import android.util.Log
 import fr.lulu.unison.importer.ImportEntry
 import fr.lulu.unison.importer.ImportMatch
-import fr.lulu.unison.library.Library
+import fr.lulu.unison.library.SubscriptionStore
 import fr.lulu.unison.library.SubscriptionRow
 import fr.lulu.unison.model.Track
 import fr.lulu.unison.youtube.AlbumItem
@@ -32,7 +32,7 @@ data class ArtistFeed(
     val artists: List<SubscriptionRow>,
     /** Titres populaires des artistes suivis, mélangés. */
     val popular: List<Track>,
-    /** Dernières sorties (albums et singles), une par artiste. */
+    /** Dernière sortie (album ou single) de chaque artiste. */
     val releases: List<YtItem>,
 )
 
@@ -41,7 +41,7 @@ data class ArtistFeed(
  * pour l'accueil, et titres à glisser dans la radio automatique.
  */
 class Subscriptions(
-    private val library: Library,
+    private val library: SubscriptionStore,
     private val catalog: MusicCatalog,
     scope: CoroutineScope,
     private val nowMs: () -> Long = System::currentTimeMillis,
@@ -50,7 +50,7 @@ class Subscriptions(
     val ids: StateFlow<Set<String>> = list.map { rows -> rows.map { it.browseId }.toSet() }
         .stateIn(scope, SharingStarted.Eagerly, emptySet())
 
-    private class Cached(val at: Long, val tracks: List<Track>, val releases: List<YtItem>)
+    private class Cached(val at: Long, val tracks: List<Track>, val releases: List<AlbumItem>)
     private val pages = ConcurrentHashMap<String, Cached>()
 
     suspend fun subscribe(browseId: String, name: String, thumbnail: String) =
@@ -108,7 +108,7 @@ class Subscriptions(
         val pages = chosen.map { a -> async { gate.withPermit { runCatching { a to page(a.browseId) }.getOrNull() } } }.awaitAll().filterNotNull()
         // Deux titres populaires par artiste, à tour de rôle.
         val popular = RadioMix.interleave(pages.map { (_, p) -> p.tracks.take(2) }).take(20)
-        val releases = pages.mapNotNull { (_, p) -> p.releases.firstOrNull() }
+        val releases = pages.mapNotNull { (_, p) -> RadioMix.latest(p.releases) }
         ArtistFeed(all, popular, releases)
     }
 
@@ -135,7 +135,7 @@ class Subscriptions(
     }
 }
 
-/** Mélange de la radio automatique avec les titres des artistes suivis. */
+/** Choix sans réseau ni base : mélange de la radio avec les artistes suivis, sorties à mettre en avant. */
 object RadioMix {
     /**
      * Prend [batch] titres de [radio] en glissant [mine] environ une place sur [every],
@@ -158,6 +158,18 @@ object RadioMix {
         }
         return out
     }
+
+    private val year = Regex("""\b(19|20)\d{2}\b""")
+
+    /**
+     * Sortie la plus récente d'après l'année du sous-titre (« Single • 2025 ») : la page d'un artiste range
+     * ses albums avant ses singles, souvent plus récents. Sans année connue, la première de la page.
+     */
+    fun latest(releases: List<AlbumItem>): AlbumItem? =
+        releases.withIndex().maxWithOrNull(
+            compareBy<IndexedValue<AlbumItem>> { r -> year.findAll(r.value.subtitle).maxOfOrNull { it.value.toInt() } ?: 0 }
+                .thenByDescending { it.index },
+        )?.value
 
     /** Un élément de chaque liste à tour de rôle. */
     fun <T> interleave(lists: List<List<T>>): List<T> {
