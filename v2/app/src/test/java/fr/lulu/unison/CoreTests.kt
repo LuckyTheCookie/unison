@@ -7,6 +7,7 @@ import fr.lulu.unison.model.RepeatMode
 import fr.lulu.unison.model.SessionSnapshot
 import fr.lulu.unison.model.Track
 import fr.lulu.unison.model.TransportKind
+import fr.lulu.unison.playback.Gapless
 import fr.lulu.unison.playback.SyncAction
 import fr.lulu.unison.playback.SyncPolicy
 import fr.lulu.unison.session.Cmd
@@ -226,5 +227,52 @@ class ClockSyncTest {
         c.addSample(t0 = 2_000, hostTime = 7_010, t1 = 2_020) // aller-retour 20 ms : le plus fiable
         assertEquals(5_000, c.offsetMs)
         assertEquals(15_000, c.hostNow(10_000))
+    }
+}
+
+class GaplessTest {
+    private fun t(id: String) = Track(id, "Titre $id", "Artiste")
+    private fun q(uid: String) = QueueItem(uid, t(uid), "me")
+    private val a = q("a"); private val b = q("b"); private val c = q("c")
+    private fun snap(current: QueueItem?, queue: List<QueueItem> = emptyList(), history: List<QueueItem> = emptyList(), repeat: RepeatMode = RepeatMode.OFF) =
+        SessionSnapshot(anchor = fr.lulu.unison.model.PlayAnchor(current, 0, 0, true), queue = queue, history = history, repeat = repeat)
+
+    @Test fun upcomingFollowsTheSessionRules() {
+        assertEquals(b, Gapless.upcoming(snap(a, listOf(b, c))))
+        assertNull(Gapless.upcoming(snap(a)))
+        assertNull(Gapless.upcoming(snap(null, listOf(b))))
+        assertEquals(a, Gapless.upcoming(snap(a, listOf(b), repeat = RepeatMode.ONE)))
+        // Répéter la file : au bout, on repart du premier titre joué.
+        assertEquals(c, Gapless.upcoming(snap(a, history = listOf(c, b), repeat = RepeatMode.ALL)))
+        assertEquals(a, Gapless.upcoming(snap(a, repeat = RepeatMode.ALL)))
+    }
+
+    @Test fun upcomingMatchesWhatTheSessionPlaysNext() {
+        // L'enchaînement préparé doit être exactement le titre que la session choisira à la fin.
+        val logic = SessionLogic(now = { 0L })
+        val cases = listOf(
+            snap(a, listOf(b, c)), snap(a), snap(a, listOf(b), repeat = RepeatMode.ONE),
+            snap(a, history = listOf(c, b), repeat = RepeatMode.ALL), snap(a, repeat = RepeatMode.ALL),
+        )
+        for (s in cases) assertEquals(logic.advance(s).anchor.item?.uid, Gapless.upcoming(s)?.uid)
+    }
+
+    @Test fun stepReusesThePreparedTrack() {
+        assertEquals(Gapless.Step.Keep, Gapless.step(listOf("a", "b"), 0, "a"))
+        // Après un enchaînement, le lecteur est déjà sur le suivant : rien à recharger.
+        assertEquals(Gapless.Step.Keep, Gapless.step(listOf("a", "b"), 1, "b"))
+        assertEquals(Gapless.Step.Jump(1), Gapless.step(listOf("a", "b"), 0, "b"))
+        assertEquals(Gapless.Step.Load, Gapless.step(listOf("a", "b"), 0, "c"))
+        assertEquals(Gapless.Step.Load, Gapless.step(emptyList(), 0, "a"))
+    }
+
+    @Test fun soloNeverJumpsOnAQueueChange() {
+        // Seul, titre encore en chargement (2 s de retard sur l'ancre) et la radio ajoute des titres : on ne saute pas.
+        assertFalse(Gapless.needsJump(shared = false, anchorChanged = false, driftMs = -2_000, soloToleranceMs = 400, sharedToleranceMs = 150))
+        // Un « aller à » demandé déplace bien la lecture.
+        assertTrue(Gapless.needsJump(shared = false, anchorChanged = true, driftMs = -60_000, soloToleranceMs = 400, sharedToleranceMs = 150))
+        assertFalse(Gapless.needsJump(shared = false, anchorChanged = true, driftMs = 120, soloToleranceMs = 400, sharedToleranceMs = 150))
+        // À plusieurs, le lecteur suit l'ancre quoi qu'il arrive.
+        assertTrue(Gapless.needsJump(shared = true, anchorChanged = false, driftMs = 300, soloToleranceMs = 400, sharedToleranceMs = 150))
     }
 }

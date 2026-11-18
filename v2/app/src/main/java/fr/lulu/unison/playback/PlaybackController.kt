@@ -19,13 +19,17 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -39,6 +43,7 @@ import fr.lulu.unison.session.SessionManager
 import fr.lulu.unison.youtube.StreamResolver
 import fr.lulu.unison.youtube.StreamUnavailableException
 import fr.lulu.unison.youtube.YtParser
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -53,6 +58,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.io.File
 import kotlin.math.abs
@@ -88,7 +95,20 @@ class PlaybackController(
     @Volatile
     private var settings = Settings()
 
+    /** Titre que joue ExoPlayer en ce moment (le premier de sa liste, ou le suivant après un enchaînement). */
     private var loaded: QueueItem? = null
+    /** Titres présents dans la liste d'ExoPlayer, par uid : le titre en cours et, s'il est prêt, le suivant. */
+    private val known = HashMap<String, QueueItem>()
+    /** Dernière ancre appliquée : seule une ancre qui change peut faire sauter la tête de lecture en solo. */
+    private var lastAnchor: PlayAnchor? = null
+    /** À plusieurs, le lecteur s'arrête à la fin de chaque titre et attend le départ commun du suivant. */
+    private var finishedUid: String? = null
+    private var prefetchJob: Job? = null
+    private var prefetchedUid: String? = null
+    private var prefetchingUid: String? = null
+    private var prefetchRetryAt = 0L
+    /** Titres dont la résolution a échoué : ils ne sont pas préparés à l'avance. */
+    private val unplayable = HashSet<String>()
     private var startJob: Job? = null
     private var graceUntil = 0L          // elapsedRealtime : pas de correction de dérive avant
     private var nudging = false
@@ -155,27 +175,80 @@ class PlaybackController(
             if (loaded != null) unload()
             return
         }
-        if (item.uid != loaded?.uid) load(item)
-        follow(a, s.shared, anchorChanged = true)
-        s.queue.firstOrNull()?.let { next -> scope.launch(Dispatchers.IO) { runCatching { streams.resolve(next.track.id) } } }
+        // À plusieurs, chaque titre se termine en pause : le suivant part à l'heure commune, pas dès que ce téléphone a fini.
+        if (exo.pauseAtEndOfMediaItems != s.shared) exo.pauseAtEndOfMediaItems = s.shared
+        val moved = place(item, a)
+        val anchorChanged = moved || a != lastAnchor
+        lastAnchor = a
+        follow(a, s.shared, anchorChanged)
+        prepareNext(Gapless.upcoming(s))
+    }
+
+    /** Amène le lecteur sur [item] : rien à faire, passage au titre déjà préparé, ou chargement complet. */
+    private fun place(item: QueueItem, a: PlayAnchor): Boolean {
+        val playlist = (0 until exo.mediaItemCount).map { exo.getMediaItemAt(it).mediaId }
+        return when (val step = Gapless.step(playlist, exo.currentMediaItemIndex, item.uid)) {
+            Gapless.Step.Keep -> {
+                if (loaded?.uid != item.uid) select(item)
+                false
+            }
+            is Gapless.Step.Jump -> {
+                // Titre suivant déjà en mémoire (« suivant », ou départ commun à plusieurs) : pas d'arrêt ni de vidage.
+                Log.d(TAG, "passage au titre préparé")
+                startJob?.cancel(); startJob = null
+                select(item)
+                exo.seekTo(step.index, startPosition(a))
+                true
+            }
+            Gapless.Step.Load -> { load(item, a); true }
+        }
+    }
+
+    /** Position de départ d'une ancre : celle prévue pour un départ programmé, sinon celle du moment. */
+    private fun startPosition(a: PlayAnchor): Long {
+        val now = sessions.hostNow()
+        return (if (a.hostTimeMs > now) a.positionMs else a.positionAt(now)).coerceAtLeast(0)
+    }
+
+    private fun select(item: QueueItem) {
+        loaded = item
+        known[item.uid] = item
+        finishedUid = null
+        retries = 0
+        _state.update { it.copy(loadedUid = item.uid, error = null) }
+        applyVolume()
     }
 
     private fun unload() {
         startJob?.cancel(); startJob = null
+        prefetchJob?.cancel(); prefetchJob = null; prefetchedUid = null
         loaded = null
+        lastAnchor = null
+        finishedUid = null
+        known.clear()
         published = null
         exo.stop()
         exo.clearMediaItems()
         _state.value = State()
     }
 
-    private fun load(item: QueueItem) {
+    private fun load(item: QueueItem, a: PlayAnchor) {
         startJob?.cancel(); startJob = null
-        loaded = item
-        retries = 0
+        Log.d(TAG, "chargement complet")
+        known.clear()
         nudging = false
+        exo.playWhenReady = false
+        exo.setPlaybackParameters(PlaybackParameters.DEFAULT)
+        exo.repeatMode = Player.REPEAT_MODE_OFF
+        exo.setMediaItems(listOf(mediaItem(item)), 0, startPosition(a))
+        exo.prepare()
+        select(item)
+        _state.value = State(loadedUid = item.uid, buffering = true)
+    }
+
+    private fun mediaItem(item: QueueItem): MediaItem {
         val t = item.track
-        val media = MediaItem.Builder()
+        return MediaItem.Builder()
             .setMediaId(item.uid)
             .setUri(Uri.parse("$SCHEME://track/${t.id}"))
             .setMediaMetadata(
@@ -187,12 +260,69 @@ class PlaybackController(
                     .build(),
             )
             .build()
-        exo.playWhenReady = false
-        exo.setPlaybackParameters(PlaybackParameters.DEFAULT)
-        exo.setMediaItem(media)
-        exo.prepare()
-        applyVolume()
-        _state.value = State(loadedUid = item.uid, buffering = true)
+    }
+
+    /**
+     * Garde dans la liste d'ExoPlayer le titre en cours suivi de [next], et rien d'autre : ExoPlayer le prépare
+     * pendant que le titre en cours joue, et passe de l'un à l'autre sans recréer la sortie audio.
+     */
+    private fun prepareNext(next: QueueItem?) {
+        val current = loaded ?: return
+        val index = exo.currentMediaItemIndex
+        if (index > 0) exo.removeMediaItems(0, index) // titre précédent, déjà enchaîné
+        val repeatOne = next?.uid == current.uid
+        val wanted = next?.takeIf { !repeatOne && it.track.id !in unplayable }
+        val mode = if (repeatOne) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        if (exo.repeatMode != mode) exo.repeatMode = mode
+        val count = exo.mediaItemCount
+        val present = if (count > 1) exo.getMediaItemAt(1).mediaId else null
+        if (present != wanted?.uid || count > 2) {
+            if (count > 1) exo.removeMediaItems(1, count)
+            known.keys.retainAll(setOf(current.uid))
+            // Le suivant n'entre dans la liste qu'une fois son flux trouvé : un titre introuvable ne doit pas
+            // faire échouer celui qui joue.
+            if (wanted != null && prefetchedUid == wanted.uid) {
+                known[wanted.uid] = wanted
+                exo.addMediaItem(mediaItem(wanted))
+            }
+        }
+        if (wanted != null && prefetchedUid != wanted.uid) prefetch(wanted)
+    }
+
+    /**
+     * Prépare le titre suivant hors du fil de lecture : adresse du flux demandée à YouTube, puis début du fichier
+     * mis en cache. Ainsi l'ouverture du suivant (enchaînement ou « suivant ») ne bloque plus sur le réseau.
+     */
+    private fun prefetch(next: QueueItem) {
+        if (prefetchingUid == next.uid && (prefetchJob?.isActive == true || SystemClock.elapsedRealtime() < prefetchRetryAt)) return
+        prefetchJob?.cancel()
+        prefetchingUid = next.uid
+        val id = next.track.id
+        prefetchJob = scope.launch {
+            val stream = runCatching { withContext(Dispatchers.IO) { streams.resolve(id) } }
+                .onFailure {
+                    if (it is CancellationException) return@onFailure
+                    if (it is StreamUnavailableException) unplayable += id
+                    // Hors ligne : on ne réessaie pas à chaque changement de la session.
+                    prefetchRetryAt = SystemClock.elapsedRealtime() + PREFETCH_RETRY_MS
+                }
+                .getOrNull() ?: return@launch
+            loudness[id] = stream.loudnessDb
+            prefetchedUid = next.uid
+            // La session a pu bouger pendant la résolution : on repart de son état actuel.
+            if (loaded != null) prepareNext(Gapless.upcoming(sessions.snapshot.value))
+            runCatching {
+                runInterruptible(Dispatchers.IO) {
+                    val spec = DataSpec.Builder()
+                        .setUri(Uri.parse(stream.url))
+                        .setKey(cacheKey(id, stream.itag))
+                        .setHttpRequestHeaders(stream.headers)
+                        .setLength(PREFETCH_BYTES)
+                        .build()
+                    CacheWriter(cacheFactory.createDataSource(), spec, null, null).cache()
+                }
+            }.onFailure { if (it !is CancellationException) Log.d(TAG, "pré-chargement interrompu (${it::class.simpleName})") }
+        }
     }
 
     /** Aligne lecture/pause et position sur l'ancre. */
@@ -225,11 +355,12 @@ class PlaybackController(
             return
         }
         startJob?.cancel(); startJob = null
-        if (anchorChanged) {
-            val drift = exo.currentPosition - a.positionAt(now)
-            if (abs(drift) > (if (shared) SyncPolicy.NUDGE_BAND_MS else SOLO_TOLERANCE_MS)) jumpTo(a)
-        }
-        if (!exo.playWhenReady) exo.play()
+        // Seul, le lecteur fait foi : un simple changement de file ne doit jamais déplacer la tête de lecture
+        // (sinon on saute le début d'un titre encore en chargement).
+        val drift = exo.currentPosition - a.positionAt(now)
+        if (Gapless.needsJump(shared, anchorChanged, drift, SOLO_TOLERANCE_MS, SyncPolicy.NUDGE_BAND_MS)) jumpTo(a)
+        // Titre terminé à plusieurs : on attend le départ commun du suivant au lieu de relancer.
+        if (!exo.playWhenReady && finishedUid != loaded?.uid) exo.play()
     }
 
     private fun jumpTo(a: PlayAnchor) {
@@ -254,14 +385,18 @@ class PlaybackController(
         val a = s.anchor
         published = if (exo.playbackState == Player.STATE_READY) item.uid to exo.currentPosition else null
         if (a.item?.uid != item.uid || !a.playing || startJob?.isActive == true) return
-        if (!exo.isPlaying || SystemClock.elapsedRealtime() < graceUntil) return
+        if (SystemClock.elapsedRealtime() < graceUntil) return
         val drift = exo.currentPosition - a.positionAt(sessions.hostNow())
 
         if (!s.shared) {
             _state.update { it.copy(driftMs = null) }
-            if (sessions.isHost && abs(drift) > REANCHOR_MS) sessions.local.reanchor(item.uid, exo.currentPosition)
+            // Seul, l'ancre suit le lecteur, y compris pendant une mise en mémoire tampon : sinon elle file
+            // en avant et une pause ou un changement de file ramènerait la lecture plus loin que le son entendu.
+            val following = exo.isPlaying || (exo.playWhenReady && exo.playbackState == Player.STATE_BUFFERING)
+            if (following && sessions.isHost && abs(drift) > REANCHOR_MS) sessions.local.reanchor(item.uid, exo.currentPosition)
             return
         }
+        if (!exo.isPlaying) return
 
         _state.update { it.copy(driftMs = drift) }
         // Première mesure après un saut ou un départ : on apprend de combien il faut anticiper la prochaine fois.
@@ -286,21 +421,9 @@ class PlaybackController(
     // --- Lecteur ---
 
     private fun buildPlayer(): ExoPlayer {
-        // Le cache est créé à la première lecture, sur le fil de chargement : lire les réglages
-        // de façon bloquante sur le fil principal figerait l'app au démarrage.
-        val cached = object : DataSource.Factory {
-            private val factory by lazy {
-                val cacheBytes = runBlocking { prefs.settings.first() }.cacheMb * 1024L * 1024L
-                val cache = SimpleCache(File(context.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(cacheBytes), StandaloneDatabaseProvider(context))
-                CacheDataSource.Factory()
-                    .setCache(cache)
-                    .setUpstreamDataSourceFactory(OkHttpDataSource.Factory(okHttp))
-                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
-            }
-
-            override fun createDataSource(): DataSource = factory.createDataSource()
-        }
+        val cached = DataSource.Factory { cacheFactory.createDataSource() }
         // L'adresse réelle du flux n'est demandée à YouTube qu'au moment de lire (elle expire en quelques heures).
+        // Pour le titre suivant, elle a déjà été obtenue par [prefetch] : la résolution ci-dessous est immédiate.
         val resolving = ResolvingDataSource.Factory(cached) { spec ->
             if (spec.uri.scheme != SCHEME) return@Factory spec
             val id = spec.uri.lastPathSegment ?: throw StreamUnavailableException("Titre invalide")
@@ -308,7 +431,7 @@ class PlaybackController(
             main.post { loudness[id] = stream.loudnessDb; applyVolume() }
             spec.buildUpon()
                 .setUri(Uri.parse(stream.url))
-                .setKey("$id.${stream.itag}")
+                .setKey(cacheKey(id, stream.itag))
                 .setHttpRequestHeaders(stream.headers)
                 .build()
         }
@@ -322,7 +445,63 @@ class PlaybackController(
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
         player.addListener(listener)
+        player.addAnalyticsListener(diagnostics)
+        // Le titre suivant commence à se charger dès que le titre en cours est prêt, pas seulement à sa fin.
+        player.preloadConfiguration = ExoPlayer.PreloadConfiguration(PRELOAD_US)
         return player
+    }
+
+    // Le cache est créé à la première lecture, hors du fil principal : lire les réglages de façon bloquante
+    // sur le fil principal figerait l'app au démarrage.
+    private val cacheFactory: CacheDataSource.Factory by lazy {
+        val cacheBytes = runBlocking { prefs.settings.first() }.cacheMb * 1024L * 1024L
+        val cache = SimpleCache(File(context.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(cacheBytes), StandaloneDatabaseProvider(context))
+        CacheDataSource.Factory()
+            .setCache(cache)
+            .setUpstreamDataSourceFactory(OkHttpDataSource.Factory(okHttp))
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    }
+
+    private fun cacheKey(id: String, itag: Int) = "$id.$itag"
+
+    /**
+     * Journal de contrôle (adb logcat -s UnisonPlayer) : un enchaînement réussi ne recrée pas la sortie audio
+     * et ne provoque ni sous-alimentation ni mise en mémoire tampon.
+     */
+    private val diagnostics = object : AnalyticsListener {
+        private var endedAt = 0L
+
+        override fun onAudioUnderrun(eventTime: AnalyticsListener.EventTime, bufferSize: Int, bufferSizeMs: Long, elapsedSinceLastFeedMs: Long) {
+            Log.w(TAG, "sous-alimentation audio (tampon ${bufferSizeMs} ms, ${elapsedSinceLastFeedMs} ms sans données)")
+        }
+
+        override fun onAudioTrackInitialized(eventTime: AnalyticsListener.EventTime, audioTrackConfig: AudioSink.AudioTrackConfig) {
+            val gap = if (endedAt > 0) " ${SystemClock.elapsedRealtime() - endedAt} ms après la fin du titre précédent" else ""
+            Log.d(TAG, "sortie audio créée$gap")
+            endedAt = 0
+        }
+
+        override fun onAudioTrackReleased(eventTime: AnalyticsListener.EventTime, audioTrackConfig: AudioSink.AudioTrackConfig) {
+            Log.d(TAG, "sortie audio libérée")
+        }
+
+        override fun onPlaybackStateChanged(eventTime: AnalyticsListener.EventTime, state: Int) {
+            if (state == Player.STATE_ENDED) endedAt = SystemClock.elapsedRealtime()
+            if (state == Player.STATE_BUFFERING) Log.d(TAG, "mise en mémoire tampon")
+        }
+
+        override fun onPositionDiscontinuity(eventTime: AnalyticsListener.EventTime, oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+            Log.d(TAG, "discontinuité ${discontinuityName(reason)} (${oldPosition.positionMs} → ${newPosition.positionMs} ms)")
+        }
+    }
+
+    private fun discontinuityName(reason: Int) = when (reason) {
+        Player.DISCONTINUITY_REASON_AUTO_TRANSITION -> "enchaînement"
+        Player.DISCONTINUITY_REASON_SEEK -> "saut"
+        Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT -> "ajustement"
+        Player.DISCONTINUITY_REASON_REMOVE -> "retrait"
+        Player.DISCONTINUITY_REASON_SKIP -> "titre ignoré"
+        else -> "interne"
     }
 
     /** Ramène les titres trop forts au niveau de référence de YouTube (jamais d'amplification). */
@@ -341,12 +520,30 @@ class PlaybackController(
             }
         }
 
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            // Seuls les enchaînements naturels nous intéressent : les sauts sont demandés par [place].
+            if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) return
+            val previous = loaded ?: return
+            val next = mediaItem?.mediaId?.let { known[it] } ?: return
+            Log.i(TAG, if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) "titre répété sans coupure" else "enchaînement sans coupure")
+            select(next)
+            // L'hôte fait avancer la session ; l'ancre arrive sur le titre que le lecteur joue déjà.
+            if (sessions.isHost) sessions.local.trackEnded(previous.uid)
+        }
+
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _state.update { it.copy(playing = isPlaying, error = if (isPlaying) null else it.error) }
             if (isPlaying) { failures = 0; retries = 0 }
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
+                // À plusieurs : fin du titre, le lecteur attend en pause que l'hôte donne le départ du suivant.
+                val uid = loaded?.uid ?: return
+                finishedUid = uid
+                if (sessions.isHost) sessions.local.trackEnded(uid)
+                return
+            }
             // Une autre app a pris le son, ou le casque a été débranché : c'est une vraie pause.
             if (!playWhenReady && (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS ||
                     reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY)
@@ -416,6 +613,11 @@ class PlaybackController(
         const val SEEK_GRACE_MS = 1_000L
         const val START_GRACE_MS = 700L
         const val MAX_RETRIES = 2
+        /** Début du titre suivant mis en cache à l'avance (≈ 1 min en qualité élevée). */
+        const val PREFETCH_BYTES = 1024L * 1024L
+        /** Durée du titre suivant qu'ExoPlayer garde prête pendant le titre en cours. */
+        const val PRELOAD_US = 20_000_000L
+        const val PREFETCH_RETRY_MS = 15_000L
         val EXPIRED_CODES = setOf(403, 410)
     }
 }
