@@ -85,6 +85,7 @@ import fr.lulu.unison.ui.screens.DownloadsScreen
 import fr.lulu.unison.ui.screens.FavoritesScreen
 import fr.lulu.unison.ui.screens.HistoryScreen
 import fr.lulu.unison.ui.screens.HomeScreen
+import fr.lulu.unison.ui.screens.ImportScreen
 import fr.lulu.unison.ui.screens.LibraryScreen
 import fr.lulu.unison.ui.screens.PlayerPage
 import fr.lulu.unison.ui.screens.PlayerScreen
@@ -217,6 +218,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
             playlist = { pid -> navController.navigate("playlist/$pid") },
             settings = { navController.navigate("settings") },
             downloads = { navController.navigate("downloads") },
+            import = { navController.navigate("import") },
             together = { togetherOpen = true },
             trackMenu = { menuTrack = it },
         )
@@ -251,6 +253,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
                         composable("playlist/{pid}") { entry -> PlaylistScreen(entry.arguments?.getString("pid")?.toLongOrNull() ?: 0, vm) }
                         composable("settings") { SettingsScreen(vm) }
                         composable("downloads") { DownloadsScreen(vm) }
+                        composable("import") { ImportScreen(vm) }
                     }
                 }
             }

@@ -24,6 +24,7 @@ class Nav(
     val playlist: (pid: Long) -> Unit,
     val settings: () -> Unit,
     val downloads: () -> Unit,
+    val import: () -> Unit,
     val together: () -> Unit,
     /** Ouvre le menu d'un titre (lire ensuite, favoris, playlist…). */
     val trackMenu: (Track) -> Unit,

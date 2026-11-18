@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import fr.lulu.unison.BuildConfig
 import fr.lulu.unison.UnisonApp
 import fr.lulu.unison.data.Profile
+import fr.lulu.unison.importer.ImportEntry
+import fr.lulu.unison.importer.ImportUi
 import fr.lulu.unison.library.DownloadRow
 import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.library.PlaylistSummary
@@ -206,6 +208,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun resumeDownloads() = downloads.resumeAll()
     fun downloadSpace(): Pair<Long, Long> = downloads.spaceBytes() to downloads.freeBytes()
     fun setDownloadWifiOnly(on: Boolean) = viewModelScope.launch { graph.prefs.setDownloadWifiOnly(on) }
+
+    // --- Import ---
+
+    private val importer = graph.importer
+    val importState: StateFlow<ImportUi> = importer.state
+    fun openImport(uri: android.net.Uri) = importer.open(uri)
+    fun startImport() = importer.start()
+    fun cancelImport() = importer.cancel()
+    fun dismissImport() = importer.dismiss()
+    suspend fun importCandidates(entry: ImportEntry.Song): List<Track> = importer.candidates(entry)
+    fun resolveImport(entry: ImportEntry.Song, track: Track) { importer.resolveManually(entry, track); toast("Ajouté") }
 
     fun toggleSaved(browseId: String, page: CollectionPage) = viewModelScope.launch {
         val on = saved.value.none { it.browseId == browseId }

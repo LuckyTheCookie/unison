@@ -124,6 +124,14 @@ fun SettingsScreen(vm: AppViewModel) {
                 GlassButton("Gérer les téléchargements", nav.downloads, Modifier.fillMaxWidth(), icon = R.drawable.ic_download_line)
             }
 
+            Label("Bibliothèque")
+            GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
+                Text("Importer depuis un autre service", style = Type.Row, color = Ink.Primary)
+                Text("Favoris, playlists et artistes d'un export CSV (Deezer, Spotify…)", style = Type.Caption, color = Ink.Tertiary)
+                Spacer(Modifier.height(12.dp))
+                GlassButton("Importer un fichier CSV", nav.import, Modifier.fillMaxWidth(), icon = R.drawable.ic_add_line)
+            }
+
             Label("Apparence")
             GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
                 SwitchRow("Fond animé", "Le fond tiré de la pochette ondule doucement. Le couper économise un peu de batterie.", settings.animatedBackground) {

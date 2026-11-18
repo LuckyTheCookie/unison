@@ -98,6 +98,10 @@ interface LibraryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun addFavorite(row: FavoriteRow)
 
+    /** Ajoute des favoris sans toucher à ceux qui existent déjà (ni à leur date). */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun addFavoritesIfAbsent(rows: List<FavoriteRow>)
+
     @Query("DELETE FROM favorite WHERE trackId = :id")
     suspend fun removeFavorite(id: String)
 
@@ -126,6 +130,9 @@ interface LibraryDao {
 
     @Query("SELECT * FROM playlist WHERE pid = :pid")
     fun playlist(pid: Long): Flow<PlaylistRow?>
+
+    @Query("SELECT pid FROM playlist WHERE name = :name ORDER BY createdAt LIMIT 1")
+    suspend fun playlistIdByName(name: String): Long?
 
     @Insert
     suspend fun createPlaylist(row: PlaylistRow): Long
@@ -196,6 +203,7 @@ interface LibraryDao {
 
     @Query("DELETE FROM download WHERE trackId = :id")
     suspend fun deleteDownload(id: String)
+
 }
 
 @Database(
@@ -255,6 +263,19 @@ class Library(context: Context, private val now: () -> Long = System::currentTim
     /** Ajoute les titres absents de la playlist ; renvoie le nombre réellement ajouté. */
     suspend fun addToPlaylist(pid: Long, tracks: List<Track>): Int = dao.appendToPlaylist(pid, tracks)
     suspend fun removeFromPlaylist(rowId: Long) = dao.removePlaylistTrack(rowId)
+
+    /** Favoris importés, le premier du fichier devenant le plus récent ; les favoris existants sont gardés tels quels. */
+    suspend fun importFavorites(tracks: List<Track>) {
+        val t = now()
+        dao.addFavoritesIfAbsent(tracks.distinctBy { it.id }.mapIndexed { i, tr -> FavoriteRow(tr.toCols(), t - i) })
+    }
+
+    /** Playlist importée : complète la playlist du même nom si elle existe (reprise d'un import), sinon la crée. */
+    suspend fun importPlaylist(name: String, tracks: List<Track>): Int {
+        val clean = name.trim().take(60).ifBlank { "Import" }
+        val pid = dao.playlistIdByName(clean) ?: createPlaylist(clean)
+        return addToPlaylist(pid, tracks)
+    }
 
     suspend fun setSaved(row: SavedRow, on: Boolean) {
         if (on) dao.save(row.copy(addedAt = now())) else dao.unsave(row.browseId)
