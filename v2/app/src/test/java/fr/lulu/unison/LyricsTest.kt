@@ -115,6 +115,18 @@ class KaraokeTest {
         assertEquals("Phoenix", lines[0].words!!.last().text)
     }
 
+    @Test fun breathsDoNotDoubleSpaces() {
+        // Cas réel (NetEase, « Billie Jean ») : des « mots » faits d'une espace marquent les respirations.
+        val line = Lrc.parseYrc("[63150,3000](63150,180,0)Who (63330,120,0)will (63450,600,0)dance (64050,180,0) (64230,150,0) on (64380,90,0)the (64470,330,0)floor (64800,540,0) (65340,300,0)round").single()
+        assertEquals("Who will dance on the floor round", line.text)
+        assertEquals(line.text, line.words!!.joinToString("") { it.text })
+        // La respiration après « dance » est retirée : le remplissage s'arrête simplement en attendant « on ».
+        assertEquals(listOf(63_450L, 64_230L), line.words!!.filter { it.text.trim() in setOf("dance", "on") }.map { it.startMs })
+        val lrc = Lrc.parse("[00:01.00]<00:01.00>Un  <00:01.50> <00:02.00>deux<00:03.00>").single()
+        assertEquals("Un deux", lrc.text)
+        assertEquals(lrc.text, lrc.words!!.joinToString("") { it.text })
+    }
+
     @Test fun progressFillsCharactersInTime() {
         val line = Lrc.parseYrc("[1000,2000](1000,1000,0)ab(2000,1000,0)cd").single()
         assertEquals(0f, Karaoke.progress(line, 500), 0f)

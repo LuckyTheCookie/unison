@@ -68,7 +68,8 @@ object Lrc {
                 val at = ms(m.groupValues[1], m.groupValues[2], m.groupValues[3])
                 val start = (at - offset).coerceAtLeast(0)
                 // Une ligne répétée (plusieurs horodatages) reprend ses temps de mots décalés d'autant.
-                out += LyricLine(start, content, enhancedWords(body, start, offset - (at - first)))
+                val words = enhancedWords(body, start, offset - (at - first))
+                out += LyricLine(start, words?.joinToString("") { it.text } ?: content, words)
             }
         }
         return out.sortedBy { it.timeMs }
@@ -149,11 +150,26 @@ fun normTitle(s: String): String = Normalizer.normalize(s, Normalizer.Form.NFD)
  * Paroles mot à mot : temps de chaque mot (réel ou estimé) et avancement du remplissage d'une ligne.
  */
 object Karaoke {
+    private val spaces = Regex("""\s{2,}""")
     private val token = Regex("""(?:[\p{IsHan}\p{IsHiragana}\p{IsKatakana}]|[^\s\p{IsHan}\p{IsHiragana}\p{IsKatakana}]+)\s*""")
 
-    /** Débarrasse la ligne de ses espaces de bord, pour que les mots recollés donnent le texte affiché. */
+    /**
+     * Débarrasse la ligne de ses espaces de bord et des espaces doublés, pour que les mots recollés donnent le
+     * texte affiché. NetEase marque les respirations par un « mot » fait d'une espace : « dance  on the floor ».
+     */
     fun trimmed(words: List<LyricWord>): List<LyricWord>? {
-        val list = words.toMutableList()
+        val list = mutableListOf<LyricWord>()
+        for (raw in words) {
+            val w = if (raw.text.length > 1) raw.copy(text = raw.text.replace(spaces, " ")) else raw
+            val afterSpace = list.lastOrNull()?.text?.lastOrNull()?.isWhitespace() == true
+            when {
+                // Respiration après un mot déjà suivi d'une espace : rien à afficher, le remplissage attend.
+                w.text.isBlank() && (afterSpace || list.isEmpty()) -> Unit
+                w.text.isBlank() -> list += w.copy(text = " ")
+                afterSpace && w.text.first().isWhitespace() -> list += w.copy(text = w.text.trimStart())
+                else -> list += w
+            }
+        }
         while (list.isNotEmpty() && list.first().text.isBlank()) list.removeAt(0)
         while (list.isNotEmpty() && list.last().text.isBlank()) list.removeAt(list.lastIndex)
         if (list.isEmpty()) return null
