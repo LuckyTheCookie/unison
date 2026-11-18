@@ -144,9 +144,16 @@ class PlaybackController(
             combine(sessions.snapshot, sessions.listenHere) { s, here -> s to here }.collect { (s, here) -> reconcile(s, here) }
         }
         // Réseau perdu ou retrouvé : le titre préparé à l'avance doit rester jouable (téléchargé, hors ligne).
-        // Le titre en cours, lui, continue sur ce qui est déjà en mémoire.
+        // Le titre en cours, lui, continue sur ce qui est déjà en mémoire ; s'il avait été écarté faute de
+        // réseau, il se charge dès que le réseau revient.
         scope.launch {
-            connectivity.online.drop(1).collect { if (loaded != null) prepareNext(Gapless.upcoming(sessions.snapshot.value)) }
+            connectivity.online.drop(1).collect {
+                val s = sessions.snapshot.value
+                when {
+                    s.anchor.item != null && s.anchor.item.uid != loaded?.uid -> reconcile(s, sessions.listenHere.value)
+                    loaded != null -> prepareNext(Gapless.upcoming(s))
+                }
+            }
         }
         scope.launch {
             while (isActive) {
@@ -199,16 +206,32 @@ class PlaybackController(
     }
 
     /**
-     * Hors ligne, la file saute les titres qui ne sont pas téléchargés (c'est l'hôte qui décide de la file).
-     * Après un tour complet sans titre jouable, la lecture se met en pause.
+     * Hors ligne, la file passe directement au prochain titre téléchargé (c'est l'hôte qui décide de la file) ;
+     * les titres sautés y restent pour plus tard. Sans titre téléchargé à suivre, la lecture se met en pause.
+     * Renvoie vrai quand [item] ne doit pas être chargé.
      */
     private fun skipIfOffline(s: SessionSnapshot, item: QueueItem): Boolean {
-        val decision = offlineSkipper.decide(item.uid, playableHere(item), sessions.isHost, s.queue.size + s.history.size + 1)
-        if (decision == OfflineSkipper.Decision.PLAY) return false
-        if (decision == OfflineSkipper.Decision.WAIT) return true
+        val decision = offlineSkipper.decide(item, s.queue, s.anchor.playing, sessions.isHost, ::playableHere)
+        when (decision) {
+            OfflineSkipper.Decision.Play -> return false
+            OfflineSkipper.Decision.Wait -> return true
+            OfflineSkipper.Decision.Hold -> Unit
+            is OfflineSkipper.Decision.JumpTo -> {
+                Log.i(TAG, "hors ligne : titre non téléchargé sauté")
+                sessions.send(Cmd.PlayNow(decision.uid))
+            }
+            OfflineSkipper.Decision.Stop -> sessions.send(Cmd.Pause)
+        }
         if (exo.playWhenReady) exo.pause()
-        _state.update { it.copy(error = OFFLINE_MISSING, buffering = false) }
-        if (decision == OfflineSkipper.Decision.PAUSE) sessions.send(Cmd.Pause) else sessions.local.trackFailed(item.uid)
+        _state.update {
+            val message = when (decision) {
+                OfflineSkipper.Decision.Stop -> OFFLINE_NOTHING
+                // En pause après « aucun titre à suivre » : on garde ce message-là.
+                OfflineSkipper.Decision.Hold -> it.error ?: OFFLINE_MISSING
+                else -> OFFLINE_MISSING
+            }
+            it.copy(error = message, buffering = false)
+        }
         return true
     }
 
@@ -607,8 +630,10 @@ class PlaybackController(
             Log.w(TAG, "lecture impossible (${error.errorCodeName})")
             if (!playableHere(item)) {
                 // Réseau perdu sur un titre non téléchargé : inutile de réessayer, la file passe aux titres téléchargés.
-                _state.update { it.copy(error = OFFLINE_MISSING, buffering = false) }
-                if (sessions.isHost) sessions.local.trackFailed(item.uid)
+                val s = sessions.snapshot.value
+                if (s.anchor.item?.uid != item.uid || !skipIfOffline(s, item)) {
+                    _state.update { it.copy(error = OFFLINE_MISSING, buffering = false) }
+                }
                 return
             }
             if (!unavailable && retries < MAX_RETRIES) {
@@ -674,6 +699,7 @@ class PlaybackController(
         const val PRELOAD_US = 20_000_000L
         const val PREFETCH_RETRY_MS = 15_000L
         const val OFFLINE_MISSING = "Hors ligne : titre non téléchargé"
+        const val OFFLINE_NOTHING = "Hors ligne : aucun titre téléchargé à suivre"
         val EXPIRED_CODES = setOf(403, 410)
     }
 }

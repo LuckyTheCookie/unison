@@ -1,42 +1,49 @@
 package fr.lulu.unison.offline
 
+import fr.lulu.unison.model.QueueItem
+
 /**
- * Hors ligne, la file saute les titres qui ne sont pas téléchargés. Après un tour complet de la file sans
- * titre jouable, la lecture s'arrête au lieu de tourner en rond. Sans Android, pour pouvoir le tester.
+ * Hors ligne, la file saute les titres qui ne sont pas téléchargés : elle passe directement au prochain titre
+ * téléchargé, et les titres sautés restent dans la file pour plus tard (comme un « lire maintenant »).
+ * S'il n'y en a aucun, la lecture se met en pause au lieu de vider la file. Sans Android, pour être testé.
  */
 class OfflineSkipper {
-    enum class Decision {
+    sealed interface Decision {
         /** Le titre se joue (téléchargé, réseau présent, ou décision laissée à l'hôte). */
-        PLAY,
+        data object Play : Decision
 
-        /** Titre à sauter : on passe au suivant. */
-        SKIP,
+        /** Titre déjà traité, la session n'a pas encore bougé : rien de plus à faire. */
+        data object Wait : Decision
 
-        /** Titre déjà sauté, la session n'a pas encore bougé : rien de plus à faire. */
-        WAIT,
+        /** Titre en pause : on ne le charge pas, mais on ne lance rien d'autre à la place de l'utilisateur. */
+        data object Hold : Decision
 
-        /** Un tour complet sans titre jouable : la lecture se met en pause. */
-        PAUSE,
+        /** Passer directement à ce titre de la file, le premier qui se joue sans réseau. */
+        data class JumpTo(val uid: String) : Decision
+
+        /** Aucun titre téléchargé dans la file : pause. */
+        data object Stop : Decision
     }
 
-    private var skipped: String? = null
-    private var skips = 0
+    private var handled: String? = null
 
     /**
-     * [playable] : le titre [uid] est téléchargé ou le réseau est là ; [host] : ce téléphone décide de la file ;
-     * [round] : nombre de titres de la session (en cours, file et historique), soit un tour complet.
+     * [playing] : la session joue (et ne fait pas qu'afficher un titre en pause) ; [host] : ce téléphone décide
+     * de la file ; [playable] : le titre est téléchargé ou le réseau est là.
      */
-    fun decide(uid: String, playable: Boolean, host: Boolean, round: Int): Decision {
-        if (playable || !host) {
-            skips = 0; skipped = null
-            return Decision.PLAY
+    fun decide(current: QueueItem, queue: List<QueueItem>, playing: Boolean, host: Boolean, playable: (QueueItem) -> Boolean): Decision {
+        if (!host || playable(current)) {
+            handled = null
+            return Decision.Play
         }
-        if (uid == skipped) return Decision.WAIT
-        skipped = uid
-        if (++skips > round) {
-            skips = 0
-            return Decision.PAUSE
+        if (!playing) {
+            // Chaque nouvel appui sur lecture refait le choix.
+            handled = null
+            return Decision.Hold
         }
-        return Decision.SKIP
+        if (current.uid == handled) return Decision.Wait
+        handled = current.uid
+        val next = queue.firstOrNull(playable)
+        return if (next != null) Decision.JumpTo(next.uid) else Decision.Stop
     }
 }

@@ -4,6 +4,7 @@ import androidx.media3.exoplayer.offline.Download
 import fr.lulu.unison.library.DownloadRow
 import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.library.toCols
+import fr.lulu.unison.model.QueueItem
 import fr.lulu.unison.model.Track
 import fr.lulu.unison.offline.DownloadStatus
 import fr.lulu.unison.offline.Downloads
@@ -42,34 +43,44 @@ class DownloadStateTest {
 }
 
 class OfflineSkipperTest {
+    private fun q(uid: String) = QueueItem(uid, Track(uid, "Titre $uid", "Artiste"), "me")
+    private val a = q("a"); private val b = q("b"); private val c = q("c"); private val d = q("d")
+    /** Hors ligne : seuls « c » et « d » sont téléchargés. */
+    private val downloaded = setOf("c", "d")
+    private val offline: (QueueItem) -> Boolean = { it.uid in downloaded }
+
     @Test fun downloadedOrOnlineTracksPlay() {
         val s = OfflineSkipper()
-        assertEquals(Decision.PLAY, s.decide("a", playable = true, host = true, round = 3))
+        assertEquals(Decision.Play, s.decide(c, listOf(a), playing = true, host = true, playable = offline))
+        assertEquals(Decision.Play, s.decide(a, listOf(b), playing = true, host = true, playable = { true }))
     }
 
-    @Test fun missingTracksAreSkippedOnce() {
+    @Test fun jumpsStraightToTheNextDownloadedTrack() {
         val s = OfflineSkipper()
-        assertEquals(Decision.SKIP, s.decide("a", playable = false, host = true, round = 3))
-        // La session n'a pas encore bougé (même titre) : on ne le saute pas deux fois.
-        assertEquals(Decision.WAIT, s.decide("a", playable = false, host = true, round = 3))
-        assertEquals(Decision.SKIP, s.decide("b", playable = false, host = true, round = 3))
-        // Un titre téléchargé remet le compte à zéro.
-        assertEquals(Decision.PLAY, s.decide("c", playable = true, host = true, round = 3))
-        assertEquals(Decision.SKIP, s.decide("a", playable = false, host = true, round = 3))
+        // « b » n'est pas téléchargé : on va directement à « c », sans vider la file en sautant un par un.
+        assertEquals(Decision.JumpTo("c"), s.decide(a, listOf(b, c, d), playing = true, host = true, playable = offline))
+        // La session n'a pas encore bougé (même titre) : on ne recommande rien.
+        assertEquals(Decision.Wait, s.decide(a, listOf(b, c, d), playing = true, host = true, playable = offline))
+        // Une fois sur un titre jouable, le compte repart de zéro.
+        assertEquals(Decision.Play, s.decide(c, listOf(d, b), playing = true, host = true, playable = offline))
+        assertEquals(Decision.JumpTo("d"), s.decide(a, listOf(b, d), playing = true, host = true, playable = offline))
     }
 
-    @Test fun aFullRoundWithoutPlayableTrackPauses() {
+    @Test fun nothingDownloadedAheadPausesAndKeepsTheQueue() {
         val s = OfflineSkipper()
-        // File de trois titres, aucun téléchargé, répétition de la file : on s'arrête après un tour.
-        val uids = listOf("a", "b", "c", "a")
-        val decisions = uids.map { s.decide(it, playable = false, host = true, round = 3) }
-        assertEquals(listOf(Decision.SKIP, Decision.SKIP, Decision.SKIP, Decision.PAUSE), decisions)
-        // Après la pause, le compte repart de zéro (l'utilisateur relance, la file reprend son tour).
-        assertEquals(Decision.SKIP, s.decide("b", playable = false, host = true, round = 3))
+        assertEquals(Decision.Stop, s.decide(a, listOf(b), playing = true, host = true, playable = offline))
+        // En pause, le titre n'est pas chargé et rien ne part tout seul.
+        assertEquals(Decision.Hold, s.decide(a, listOf(b), playing = false, host = true, playable = offline))
+        // Un nouvel appui sur lecture refait le choix (toujours rien : nouvelle pause).
+        assertEquals(Decision.Stop, s.decide(a, listOf(b), playing = true, host = true, playable = offline))
+    }
+
+    @Test fun aPausedMissingTrackNeverStartsAnotherOne() {
+        // Lancement de l'app hors ligne sur un titre non téléchargé en pause : pas de lecture surprise.
+        assertEquals(Decision.Hold, OfflineSkipper().decide(a, listOf(c), playing = false, host = true, playable = offline))
     }
 
     @Test fun guestsLeaveTheQueueToTheHost() {
-        val s = OfflineSkipper()
-        assertEquals(Decision.PLAY, s.decide("a", playable = false, host = false, round = 3))
+        assertEquals(Decision.Play, OfflineSkipper().decide(a, listOf(c), playing = true, host = false, playable = offline))
     }
 }
