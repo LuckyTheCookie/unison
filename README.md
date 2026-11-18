@@ -27,10 +27,18 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - **Bass Booster** (Settings > Playback): five levels, applied on the phone with a bass shelf filter and a limiter, so it works on every device and on downloaded tracks.
 - **Library on the phone**: favourites, playlists, saved albums, followed artists and listening history.
 
+### 🔌 Audio sources
+- YouTube Music is the default source. In Settings > Audio source you can add **another source** from the URL of its addon manifest (HTTP `/manifest.json`, `/search`, `/stream/{id}`), pick it, search directly inside it, or remove it. Unison ships **no source by default**: you are responsible for the legality of the content and for the terms of any source you add.
+- A track that the chosen source also has (same title, version, artist and duration) plays from the source; otherwise it falls back to YouTube Music (switchable, and never used in data-saver mode).
+- Safe by design: HTTPS only, size and time limits, no private network addresses, no encrypted/DRM or adaptive (HLS/DASH) streams, header allow-list, nothing downloaded from a source is ever executed. A confirmation screen with a health check comes before any source is added.
+- Downloads remember their source and format; shared sessions work with source tracks without any protocol change.
+- A **quality label** under the track ("Sans perte", "Haute résolution", "Haute qualité", Dolby Atmos) is read from the format that is really decoded and hidden when it is standard.
+
 ### 🎤 Word-by-word lyrics
 - Synced lyrics from [LRCLIB](https://lrclib.net) and NetEase. When the source gives word timings, each word (each character for CJK) lights up as it is sung.
 - Without word timings, the time of each line is spread over its characters, so the karaoke effect is always there.
 - Tap a line to jump to it. Lyrics of downloaded tracks work offline.
+- A one-line **lyrics strip** above the seek bar follows the song on the artwork page; tap it to open the full lyrics. A new setting reduces animations.
 
 ### 📥 Offline listening
 - **Download** any track from its menu, or a whole favourites list, playlist or album.
@@ -85,7 +93,8 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - **Gapless** (`Gapless`): ExoPlayer holds the current and the next track; the session switches to the prepared item instead of reloading.
 - **Streams** are resolved by [InnerTubeX](https://github.com/MetrolistGroup/innertubex) just before playback, fetched in bounded ranges, and read from the permanent downloads cache first (`offline/`).
 - **Bass Booster** (`BassBoost`): a Media3 audio processor (low-shelf biquad around 100 Hz, input headroom, limiter), updated live without reloading the track.
-- **Library** (`library/`, `artists/`): Room database for favourites, playlists, history, downloads and followed artists.
+- **Sources** (`source/`): `MusicSource`, `YouTubeSource`, the addon client, `TrackMatcher` and `SourceResolver` (chosen source first, YouTube Music as a fallback); a network guard checks every hop of a source stream.
+- **Library** (`library/`, `artists/`): Room database (schema versioned in `v2/app/schemas/`) for favourites, playlists, history, downloads and followed artists.
 - **Import** (`importer/`): a RFC 4180 CSV parser with columns detected by header name, then a scored YouTube Music search per line.
 
 The app lives in [`v2/`](v2). The first version, which drove the Deezer app, is kept in `app/` for reference.
