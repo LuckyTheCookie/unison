@@ -1,6 +1,7 @@
 package fr.lulu.unison.library
 
 import android.content.Context
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Embedded
@@ -16,6 +17,7 @@ import androidx.room.Transaction
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import fr.lulu.unison.model.Track
+import fr.lulu.unison.source.StreamInfo
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -77,6 +79,14 @@ data class DownloadRow(
     /** Niveau sonore annoncé par YouTube, pour égaliser le volume hors ligne. */
     val loudnessDb: Double?,
     val addedAt: Long,
+    /** Source d'où vient le fichier (« yt » pour YouTube Music) : un titre téléchargé garde sa source d'origine. */
+    @ColumnInfo(defaultValue = "yt")
+    val sourceId: String = "yt",
+    /** Format annoncé par la source : codec (flac, opus…), débit, fréquence et profondeur ; null si inconnu. */
+    val codec: String? = null,
+    val bitrateKbps: Int? = null,
+    val sampleRate: Int? = null,
+    val bitDepth: Int? = null,
 )
 
 /** Artiste suivi : ses titres nourrissent l'accueil et la radio. */
@@ -208,8 +218,11 @@ interface LibraryDao {
     @Query("UPDATE download SET state = :state, bytes = :bytes, totalBytes = :total WHERE trackId = :id")
     suspend fun setDownloadState(id: String, state: Int, bytes: Long, total: Long)
 
-    @Query("UPDATE download SET itag = :itag, loudnessDb = :loudnessDb WHERE trackId = :id")
-    suspend fun setDownloadFormat(id: String, itag: Int, loudnessDb: Double?)
+    @Query(
+        "UPDATE download SET itag = :itag, loudnessDb = :loudnessDb, sourceId = :sourceId, codec = :codec, " +
+            "bitrateKbps = :bitrateKbps, sampleRate = :sampleRate, bitDepth = :bitDepth WHERE trackId = :id",
+    )
+    suspend fun setDownloadFormat(id: String, itag: Int, loudnessDb: Double?, sourceId: String, codec: String?, bitrateKbps: Int?, sampleRate: Int?, bitDepth: Int?)
 
     @Query("DELETE FROM download WHERE trackId = :id")
     suspend fun deleteDownload(id: String)
@@ -230,8 +243,8 @@ interface LibraryDao {
 
 @Database(
     entities = [FavoriteRow::class, HistoryRow::class, PlaylistRow::class, PlaylistTrackRow::class, SavedRow::class, DownloadRow::class, SubscriptionRow::class],
-    version = 3,
-    exportSchema = false,
+    version = 4,
+    exportSchema = true,
 )
 abstract class LibraryDb : RoomDatabase() {
     abstract fun dao(): LibraryDao
@@ -261,7 +274,18 @@ object LibraryMigrations {
         }
     }
 
-    val ALL = arrayOf(V1_V2, V2_V3)
+    /** 2.3 : source et format des titres téléchargés (les téléchargements existants viennent de YouTube Music). */
+    val V3_V4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `download` ADD COLUMN `sourceId` TEXT NOT NULL DEFAULT 'yt'")
+            db.execSQL("ALTER TABLE `download` ADD COLUMN `codec` TEXT")
+            db.execSQL("ALTER TABLE `download` ADD COLUMN `bitrateKbps` INTEGER")
+            db.execSQL("ALTER TABLE `download` ADD COLUMN `sampleRate` INTEGER")
+            db.execSQL("ALTER TABLE `download` ADD COLUMN `bitDepth` INTEGER")
+        }
+    }
+
+    val ALL = arrayOf(V1_V2, V2_V3, V3_V4)
 }
 
 /** Ce dont les abonnements ont besoin de la bibliothèque (une version en mémoire sert aux tests). */
@@ -351,6 +375,8 @@ class Library(context: Context, private val now: () -> Long = System::currentTim
     override suspend fun unsubscribe(browseId: String) = dao.unsubscribe(browseId)
 
     suspend fun setDownloadState(id: String, state: Int, bytes: Long, total: Long) = dao.setDownloadState(id, state, bytes, total)
-    suspend fun setDownloadFormat(id: String, itag: Int, loudnessDb: Double?) = dao.setDownloadFormat(id, itag, loudnessDb)
+    /** Enregistre le flux réellement téléchargé : sa source et son format. */
+    suspend fun setDownloadFormat(id: String, s: StreamInfo) =
+        dao.setDownloadFormat(id, s.itag, s.loudnessDb, s.sourceId, s.codec, s.bitrateKbps, s.sampleRateHz, s.bitDepth)
     suspend fun deleteDownload(id: String) = dao.deleteDownload(id)
 }

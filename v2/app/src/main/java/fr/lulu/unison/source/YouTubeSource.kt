@@ -32,6 +32,11 @@ class YouTubeSource(private val engine: YouTubeEngine, private val catalog: Musi
         private val OPUS_ITAGS = setOf(249, 250, 251, 600, 774)
         private val AAC_ITAGS = setOf(139, 140, 141, 599)
 
+        /** Codec d'un format YouTube d'après son itag (téléchargements antérieurs à l'enregistrement du codec). */
+        fun codecOfItag(itag: Int): String? = when (itag) { in OPUS_ITAGS -> "opus"; in AAC_ITAGS -> "aac"; else -> null }
+
+        fun kbpsOfItag(itag: Int): Int? = ITAG_KBPS[itag]
+
         fun describe(s: ResolvedStream): StreamInfo {
             val mime = s.mimeType?.lowercase()
             val codec = when {

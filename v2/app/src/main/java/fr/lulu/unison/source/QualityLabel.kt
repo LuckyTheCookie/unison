@@ -65,6 +65,15 @@ object QualityLabel {
         ).joinToString(" · ")
     }
 
+    /** Format d'un fichier téléchargé, en court (« FLAC 24 bits · 96 kHz », « Opus 160 kbps ») ; null si inconnu. */
+    fun short(codec: String?, bitrateKbps: Int?, sampleRateHz: Int?, bitDepth: Int?): String? {
+        val c = codec?.lowercase() ?: return null
+        val name = when (c) { "flac" -> "FLAC"; "alac" -> "ALAC"; "pcm" -> "PCM"; "opus" -> "Opus"; "aac" -> "AAC"; "mp3" -> "MP3"; "vorbis" -> "Vorbis"; "eac3" -> "E-AC-3"; else -> return null }
+        return if (c in setOf("flac", "alac", "pcm")) {
+            listOfNotNull(name + (bitDepth?.let { " $it bits" } ?: ""), sampleRateHz?.let { khz(it) }).joinToString(" · ")
+        } else name + (bitrateKbps?.let { " $it kbps" } ?: "")
+    }
+
     private fun khz(hz: Int): String {
         val k = hz / 1000.0
         return (if (hz % 1000 == 0) "${hz / 1000}" else String.format(java.util.Locale.FRANCE, "%.1f", k)) + " kHz"

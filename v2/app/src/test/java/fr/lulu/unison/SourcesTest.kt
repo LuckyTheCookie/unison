@@ -261,3 +261,13 @@ class QualityLabelTest {
         assertNull(tier(d("audio/eac3", kbps = 192)))
     }
 }
+
+class SafeFileNameTest {
+    @Test fun youtubeIdsKeepTheirFilesOthersAreHashed() {
+        assertEquals("khnokW3Mw24", fr.lulu.unison.source.SourceTrackId.fileName("khnokW3Mw24"))
+        val src = fr.lulu.unison.source.SourceTrackId.fileName("src:s1::../../etc/x")
+        assertFalse(src.contains('/') || src.contains(".."))
+        assertEquals(33, src.length)
+        assertFalse(src == fr.lulu.unison.source.SourceTrackId.fileName("src:s1::autre"))
+    }
+}

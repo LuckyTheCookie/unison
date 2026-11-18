@@ -87,6 +87,11 @@ android {
     }
 }
 
+// Schémas de la base exportés (et versionnés) : ils servent à vérifier les migrations.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 kotlin {
     compilerOptions {
         optIn.add("androidx.media3.common.util.UnstableApi")
@@ -147,4 +152,5 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.mockwebserver)
+    testImplementation(libs.sqlite.jdbc)
 }

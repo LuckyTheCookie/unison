@@ -2,6 +2,7 @@ package fr.lulu.unison.lyrics
 
 import android.util.Log
 import fr.lulu.unison.model.Track
+import fr.lulu.unison.source.SourceTrackId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -177,7 +178,7 @@ class LyricsRepository(
         return best?.also { cache[track.id] = it } ?: run { if (!failed) missing += track.id; null }
     }
 
-    private fun offlineFile(id: String) = offlineDir?.let { File(it, "$id.json") }
+    private fun offlineFile(id: String) = offlineDir?.let { File(it, "${SourceTrackId.fileName(id)}.json") }
 
     private suspend fun readOffline(id: String): Lyrics? = withContext(Dispatchers.IO) {
         val f = offlineFile(id)?.takeIf { it.exists() } ?: return@withContext null
@@ -190,8 +191,8 @@ class LyricsRepository(
         val l = lyricsFor(track) ?: return
         withContext(Dispatchers.IO) {
             dir.mkdirs()
-            val f = File(dir, "${track.id}.json")
-            val tmp = File(dir, "${track.id}.json.tmp")
+            val f = File(dir, "${SourceTrackId.fileName(track.id)}.json")
+            val tmp = File(dir, "${SourceTrackId.fileName(track.id)}.json.tmp")
             tmp.writeText(json.encodeToString(Lyrics.serializer(), l))
             tmp.renameTo(f)
         }

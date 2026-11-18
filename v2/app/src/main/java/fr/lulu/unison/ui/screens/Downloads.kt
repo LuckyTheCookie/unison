@@ -28,6 +28,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import fr.lulu.unison.R
+import fr.lulu.unison.source.QualityLabel
+import fr.lulu.unison.source.SourceConfig
+import fr.lulu.unison.source.SourceIds
+import fr.lulu.unison.source.YouTubeSource
 import fr.lulu.unison.library.DownloadRow
 import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.ui.AppViewModel
@@ -59,6 +63,7 @@ fun DownloadsScreen(vm: AppViewModel) {
     val settings by vm.settings.collectAsState()
     val online by vm.online.collectAsState()
     val snap by vm.snapshot.collectAsState()
+    val sources by vm.sources.collectAsState()
     var clearing by remember { mutableStateOf(false) }
     // Place occupée, relue de temps en temps pendant les téléchargements.
     var space by remember { mutableStateOf(0L to 0L) }
@@ -131,7 +136,7 @@ fun DownloadsScreen(vm: AppViewModel) {
                         onClick = { vm.play(ready, ready.indexOfFirst { it.id == track.id }.coerceAtLeast(0)) },
                         current = snap.anchor.item?.track?.id == track.id,
                         playing = snap.anchor.playing,
-                        subtitle = listOf(track.artist, size(row.totalBytes)).joinToString(" · "),
+                        subtitle = listOfNotNull(track.artist, formatOf(row, sources), size(row.totalBytes)).joinToString(" · "),
                         onMore = { nav.trackMenu(track) },
                         trailing = { IconBtn(R.drawable.ic_close_line, "Supprimer le téléchargement", { vm.removeDownload(track.id) }, size = 40.dp, iconSize = 18.dp, tint = Ink.Tertiary) },
                     )
@@ -167,6 +172,18 @@ private fun PendingRow(row: DownloadRow, progress: Float, allPaused: Boolean, vm
             IconBtn(R.drawable.ic_close_line, "Annuler", { vm.removeDownload(track.id) }, size = 40.dp, iconSize = 18.dp, tint = Ink.Tertiary)
         },
     )
+}
+
+/**
+ * Format et origine d'un titre téléchargé : « FLAC 24 bits · 96 kHz · Ma source », « Opus 160 kbps ».
+ * Un titre garde la source d'où il a été téléchargé, même si elle a été retirée depuis.
+ */
+private fun formatOf(row: DownloadRow, sources: List<SourceConfig>): String? {
+    val codec = row.codec ?: YouTubeSource.codecOfItag(row.itag)
+    val kbps = row.bitrateKbps ?: YouTubeSource.kbpsOfItag(row.itag).takeIf { row.codec == null }
+    val format = QualityLabel.short(codec, kbps, row.sampleRate, row.bitDepth)
+    val origin = if (row.sourceId == SourceIds.YOUTUBE) null else sources.firstOrNull { it.id == row.sourceId }?.name ?: "source retirée"
+    return listOfNotNull(format, origin).joinToString(" · ").ifBlank { null }
 }
 
 /** Part du stockage prise par les téléchargements. */

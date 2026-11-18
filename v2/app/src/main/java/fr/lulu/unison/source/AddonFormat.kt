@@ -313,6 +313,15 @@ object AddonFormat {
 
 /** Identifiants des titres d'une source importée : `src:<configuration>::<titre>`. */
 object SourceTrackId {
+    private val SAFE = Regex("^[A-Za-z0-9_-]{1,64}$")
+
+    /**
+     * Nom de fichier sûr pour un titre (pochette, paroles gardées hors ligne) : l'identifiant YouTube tel quel
+     * (les fichiers existants restent valables), une empreinte pour tout identifiant qui contiendrait « / » ou « .. ».
+     */
+    fun fileName(id: String): String = if (SAFE.matches(id)) id else
+        "h" + java.security.MessageDigest.getInstance("SHA-256").digest(id.toByteArray()).take(16).joinToString("") { "%02x".format(it) }
+
     private const val PREFIX = "src:"
     private const val SEP = "::"
 

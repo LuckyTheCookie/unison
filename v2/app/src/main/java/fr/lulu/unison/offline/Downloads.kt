@@ -19,6 +19,7 @@ import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.library.Library
 import fr.lulu.unison.lyrics.LyricsRepository
 import fr.lulu.unison.model.Track
+import fr.lulu.unison.source.SourceTrackId
 import fr.lulu.unison.source.StreamResolver
 import fr.lulu.unison.source.TrackUri
 import fr.lulu.unison.source.toRequest
@@ -117,7 +118,7 @@ class Downloads(
             val quality = runBlocking { prefs.settings.first() }.quality
             val stream = runBlocking { streams.resolve(ref, quality.toRequest(), StreamResolver.Purpose.DOWNLOAD) }
             stream.loudnessDb?.let { loudness[id] = it }
-            scope.launch(Dispatchers.IO) { library.setDownloadFormat(id, stream.itag, stream.loudnessDb) }
+            scope.launch(Dispatchers.IO) { library.setDownloadFormat(id, stream) }
             spec.buildUpon().setUri(Uri.parse(stream.url)).setHttpRequestHeaders(stream.headers).build()
         },
         Executors.newFixedThreadPool(2),
@@ -267,7 +268,7 @@ class Downloads(
         if (file.exists()) OfflineArt.put(track.cover, file)
     }
 
-    private fun coverFile(id: String) = File(coversDir, "$id.jpg")
+    private fun coverFile(id: String) = File(coversDir, "${SourceTrackId.fileName(id)}.jpg")
 
     companion object {
         private const val TAG = "UnisonDownloads"
