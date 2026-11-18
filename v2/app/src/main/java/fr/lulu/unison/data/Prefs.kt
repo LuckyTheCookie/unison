@@ -24,7 +24,14 @@ data class Settings(
     val downloadWifiOnly: Boolean = true,
     /** La radio automatique glisse des titres des artistes suivis. */
     val preferMyArtists: Boolean = true,
-)
+    /** Renfort des graves, propre à ce téléphone (jamais partagé en session). */
+    val bassBoostOn: Boolean = false,
+    /** Niveau du renfort, 1 à 5, gardé quand on le coupe. */
+    val bassLevel: Int = 3,
+) {
+    /** Niveau appliqué : 0 quand le renfort est coupé. */
+    val bassBoost: Int get() = if (bassBoostOn) bassLevel.coerceIn(1, 5) else 0
+}
 
 private val Context.store by preferencesDataStore("profile")
 
@@ -39,6 +46,8 @@ class Prefs(private val context: Context) {
     private val kAnimated = booleanPreferencesKey("animated_bg")
     private val kWifiOnly = booleanPreferencesKey("download_wifi_only")
     private val kMyArtists = booleanPreferencesKey("prefer_my_artists")
+    private val kBassOn = booleanPreferencesKey("bass_boost_on")
+    private val kBassLevel = intPreferencesKey("bass_boost_level")
 
     val profile: Flow<Profile> = context.store.data.map { p ->
         Profile(p[kId] ?: "", p[kName]?.ifBlank { null } ?: defaultName(), p[kColor] ?: AvatarColors[5])
@@ -52,6 +61,8 @@ class Prefs(private val context: Context) {
             animatedBackground = p[kAnimated] ?: true,
             downloadWifiOnly = p[kWifiOnly] ?: true,
             preferMyArtists = p[kMyArtists] ?: true,
+            bassBoostOn = p[kBassOn] ?: false,
+            bassLevel = (p[kBassLevel] ?: 3).coerceIn(1, 5),
         )
     }
 
@@ -78,6 +89,8 @@ class Prefs(private val context: Context) {
     suspend fun setAnimatedBackground(on: Boolean) { context.store.edit { it[kAnimated] = on } }
     suspend fun setDownloadWifiOnly(on: Boolean) { context.store.edit { it[kWifiOnly] = on } }
     suspend fun setPreferMyArtists(on: Boolean) { context.store.edit { it[kMyArtists] = on } }
+    suspend fun setBassBoost(on: Boolean) { context.store.edit { it[kBassOn] = on } }
+    suspend fun setBassLevel(level: Int) { context.store.edit { it[kBassLevel] = level.coerceIn(1, 5); it[kBassOn] = true } }
 
     private fun defaultName(): String = Build.MODEL?.take(24)?.ifBlank { null } ?: "Mon téléphone"
 }

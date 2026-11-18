@@ -384,6 +384,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setCacheMb(mb: Int) = viewModelScope.launch { graph.prefs.setCacheMb(mb) }
     fun setNormalize(on: Boolean) = viewModelScope.launch { graph.prefs.setNormalize(on) }
     fun setAnimatedBackground(on: Boolean) = viewModelScope.launch { graph.prefs.setAnimatedBackground(on) }
+    fun setBassBoost(on: Boolean) = viewModelScope.launch { graph.prefs.setBassBoost(on) }
+    fun setBassLevel(level: Int) = viewModelScope.launch { graph.prefs.setBassLevel(level) }
 
     // En dernier : tous les champs ci-dessus doivent exister avant le premier chargement.
     init {

@@ -27,9 +27,11 @@ import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -126,6 +128,8 @@ class PlaybackController(
     private var retries = 0
     private var failures = 0
     private val loudness = HashMap<String, Double?>()
+    /** Renfort des graves de ce téléphone, réglé à chaud depuis les réglages. */
+    private val bass = BassBoostProcessor()
 
     private enum class LeadKind { NONE, SEEK, START }
 
@@ -139,7 +143,7 @@ class PlaybackController(
             // Appelé hors du fil principal par la session : on ne lit que des valeurs publiées.
             published
         }
-        scope.launch { prefs.settings.collect { settings = it; applyVolume() } }
+        scope.launch { prefs.settings.collect { settings = it; bass.level = it.bassBoost; applyVolume() } }
         scope.launch {
             combine(sessions.snapshot, sessions.listenHere) { s, here -> s to here }.collect { (s, here) -> reconcile(s, here) }
         }
@@ -506,7 +510,7 @@ class PlaybackController(
                 .setHttpRequestHeaders(stream.headers)
                 .build()
         }
-        val player = ExoPlayer.Builder(context)
+        val player = ExoPlayer.Builder(context, audioRenderers(context, bass))
             .setMediaSourceFactory(DefaultMediaSourceFactory(resolving))
             .setAudioAttributes(
                 AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(),
@@ -702,6 +706,16 @@ class PlaybackController(
         const val OFFLINE_NOTHING = "Hors ligne : aucun titre téléchargé à suivre"
         val EXPIRED_CODES = setOf(403, 410)
     }
+}
+
+/** Rendu audio habituel d'ExoPlayer, avec [processor] (renfort des graves) en tête de la chaîne de traitement. */
+internal fun audioRenderers(context: Context, processor: BassBoostProcessor) = object : DefaultRenderersFactory(context) {
+    override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
+        DefaultAudioSink.Builder(context)
+            .setEnableFloatOutput(enableFloatOutput)
+            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            .setAudioProcessors(arrayOf(processor))
+            .build()
 }
 
 /**

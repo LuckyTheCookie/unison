@@ -106,6 +106,15 @@ fun SettingsScreen(vm: AppViewModel) {
                 Divider()
                 SwitchRow("Égaliser le volume", "Ramène les titres trop forts au même niveau que les autres", settings.normalizeVolume) { vm.setNormalize(!settings.normalizeVolume) }
                 Divider()
+                SwitchRow("Bass Booster", "Renforce les graves sur ce téléphone, sans saturer. S'applique tout de suite.", settings.bassBoostOn) {
+                    vm.setBassBoost(!settings.bassBoostOn)
+                }
+                if (settings.bassBoostOn) {
+                    Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        (1..5).forEach { level -> Chip("$level", settings.bassLevel == level, onClick = { vm.setBassLevel(level) }) }
+                    }
+                }
+                Divider()
                 SwitchRow("Privilégier mes artistes", "La radio automatique glisse environ un titre sur quatre de tes artistes suivis", settings.preferMyArtists) { vm.setPreferMyArtists(!settings.preferMyArtists) }
                 Divider()
                 Text("Titres gardés sur le téléphone", style = Type.Row, color = Ink.Primary)
