@@ -191,6 +191,27 @@ class LiveImportTest {
     }
 }
 
+/**
+ * Lecture d'un vrai export, sans réseau : UNISON_IMPORT_CSV=/chemin/fichier.csv ./gradlew testDebugUnitTest --tests '*LocalCsvFile*'
+ * Chaque ligne du fichier doit être comptée exactement une fois (titre, artiste ou ignorée).
+ */
+class LocalCsvFileTest {
+    @Test fun everyLineIsAccountedFor() {
+        val path = System.getenv("UNISON_IMPORT_CSV")?.takeIf { it.isNotBlank() }
+        org.junit.Assume.assumeTrue("UNISON_IMPORT_CSV absent", path != null && java.io.File(path).exists())
+        val text = java.io.File(path!!).readText()
+        val rows = Csv.parse(text)
+        val width = rows.first().size
+        assertTrue("lignes de largeur inattendue", rows.all { it.size == width })
+        val plan = LibraryCsv.plan(text)
+        assertEquals(rows.size - 1, plan.songs.size + plan.artists.size + plan.skipped)
+        assertTrue(plan.songs.all { it.title.isNotBlank() })
+        assertTrue(plan.songs.all { it.target != ImportTarget.Playlist("") })
+        val keys = plan.songs.distinctBy { it.key }.size
+        println("Fichier : ${rows.size - 1} lignes ; ${plan.favorites} favoris, playlists ${plan.playlists.map { (n, c) -> "« $n » : $c" }}, ${plan.artists.size} artistes, ${plan.skipped} ignorées ; $keys recherches distinctes")
+    }
+}
+
 class ImportMatchVersionsTest {
     private fun song(title: String, artist: String) = ImportEntry.Song(1, title, artist, "", 0, ImportTarget.Favorites)
     private fun t(id: String, title: String, artist: String) = Track(id, title, artist)
