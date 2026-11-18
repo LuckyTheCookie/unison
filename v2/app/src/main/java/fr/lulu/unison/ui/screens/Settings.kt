@@ -131,7 +131,7 @@ fun SettingsScreen(vm: AppViewModel) {
                 Text("Importer depuis un autre service", style = Type.Row, color = Ink.Primary)
                 Text("Favoris, playlists et artistes d'un export CSV (Deezer, Spotify…)", style = Type.Caption, color = Ink.Tertiary)
                 Spacer(Modifier.height(12.dp))
-                GlassButton("Importer un fichier CSV", nav.import, Modifier.fillMaxWidth(), icon = R.drawable.ic_add_line)
+                GlassButton("Importer un fichier CSV", nav.import, Modifier.fillMaxWidth(), icon = R.drawable.ic_import_line)
             }
 
             Label("Apparence")

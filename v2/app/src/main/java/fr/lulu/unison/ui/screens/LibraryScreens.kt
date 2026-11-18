@@ -90,7 +90,7 @@ fun LibraryScreen(vm: AppViewModel) {
         item {
             Row(Modifier.fillMaxWidth().padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 SectionHeader("Playlists", Modifier.weight(1f))
-                IconBtn(R.drawable.ic_download_line, "Importer une bibliothèque", nav.import, Modifier.padding(top = 16.dp, end = 8.dp), background = Ink.Fill, size = 40.dp, iconSize = 20.dp)
+                IconBtn(R.drawable.ic_import_line, "Importer une bibliothèque", nav.import, Modifier.padding(top = 16.dp, end = 8.dp), background = Ink.Fill, size = 40.dp, iconSize = 20.dp)
                 IconBtn(R.drawable.ic_add_line, "Nouvelle playlist", { creating = true }, Modifier.padding(top = 16.dp), background = Ink.Fill, size = 40.dp, iconSize = 20.dp)
             }
         }

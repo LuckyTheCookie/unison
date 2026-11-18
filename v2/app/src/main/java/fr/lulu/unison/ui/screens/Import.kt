@@ -105,7 +105,7 @@ fun ImportScreen(vm: AppViewModel) {
 private fun Intro(onPick: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = LocalBottomInset.current + 24.dp)) {
         GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(18.dp)) {
-            Glyph(R.drawable.ic_download_line, tint = Ink.Accent, size = 32.dp)
+            Glyph(R.drawable.ic_import_line, tint = Ink.Accent, size = 32.dp)
             Spacer(Modifier.height(12.dp))
             Text("Retrouve ta musique d'ailleurs", style = Type.Heading, color = Ink.Primary)
             Text(
@@ -114,7 +114,7 @@ private fun Intro(onPick: () -> Unit) {
                 style = Type.Body, color = Ink.Secondary, modifier = Modifier.padding(top = 6.dp),
             )
             Spacer(Modifier.height(18.dp))
-            PrimaryButton("Choisir un fichier CSV", onPick, Modifier.fillMaxWidth(), icon = R.drawable.ic_add_line)
+            PrimaryButton("Choisir un fichier CSV", onPick, Modifier.fillMaxWidth(), icon = R.drawable.ic_import_line)
         }
     }
 }
@@ -137,7 +137,7 @@ private fun Preview(s: ImportUi.Ready, onStart: () -> Unit, onCancel: () -> Unit
                 )
                 Row(Modifier.padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     GlassButton("Annuler", onCancel)
-                    PrimaryButton("Importer", onStart, icon = R.drawable.ic_download_line)
+                    PrimaryButton("Importer", onStart, icon = R.drawable.ic_import_line)
                 }
             }
         }
