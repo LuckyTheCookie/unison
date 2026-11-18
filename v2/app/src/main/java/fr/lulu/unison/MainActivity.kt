@@ -70,6 +70,7 @@ import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.LocalBottomInset
 import fr.lulu.unison.ui.LocalDownloads
 import fr.lulu.unison.ui.LocalNav
+import fr.lulu.unison.ui.LocalReduceMotion
 import fr.lulu.unison.ui.Nav
 import fr.lulu.unison.ui.PredictiveSheet
 import fr.lulu.unison.ui.components.Cover
@@ -228,7 +229,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
     val bottomInset = navBar + 76.dp + if (current != null) 72.dp else 0.dp
     val backdrop = rememberLayerBackdrop()
 
-    CompositionLocalProvider(LocalDownloads provides downloads) {
+    CompositionLocalProvider(LocalDownloads provides downloads, LocalReduceMotion provides settings.reduceMotion) {
         Box(Modifier.fillMaxSize().background(Ink.Canvas)) {
             Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
                 KawarpBackground(current?.track?.cover, Modifier.fillMaxSize(), dim = 0.6f, animated = settings.animatedBackground && !playerOpen)

@@ -33,6 +33,8 @@ data class Settings(
     val activeSource: String = SourceIds.YOUTUBE,
     /** Un titre absent de la source choisie (ou une source en panne) se lit sur YouTube Music. */
     val fallbackToYouTube: Boolean = true,
+    /** Réduire les animations du lecteur : pochette, barre, paroles et reflets passent sans transition. */
+    val reduceMotion: Boolean = false,
 ) {
     /** Niveau appliqué : 0 quand le renfort est coupé. */
     val bassBoost: Int get() = if (bassBoostOn) bassLevel.coerceIn(1, 5) else 0
@@ -55,6 +57,7 @@ class Prefs(private val context: Context) {
     private val kBassLevel = intPreferencesKey("bass_boost_level")
     private val kSource = stringPreferencesKey("active_source")
     private val kFallback = booleanPreferencesKey("fallback_youtube")
+    private val kReduceMotion = booleanPreferencesKey("reduce_motion")
 
     val profile: Flow<Profile> = context.store.data.map { p ->
         Profile(p[kId] ?: "", p[kName]?.ifBlank { null } ?: defaultName(), p[kColor] ?: AvatarColors[5])
@@ -72,6 +75,7 @@ class Prefs(private val context: Context) {
             bassLevel = (p[kBassLevel] ?: 3).coerceIn(1, 5),
             activeSource = p[kSource]?.ifBlank { null } ?: SourceIds.YOUTUBE,
             fallbackToYouTube = p[kFallback] ?: true,
+            reduceMotion = p[kReduceMotion] ?: false,
         )
     }
 
@@ -102,6 +106,7 @@ class Prefs(private val context: Context) {
     suspend fun setBassLevel(level: Int) { context.store.edit { it[kBassLevel] = level.coerceIn(1, 5); it[kBassOn] = true } }
     suspend fun setActiveSource(id: String) { context.store.edit { it[kSource] = id } }
     suspend fun setFallbackToYouTube(on: Boolean) { context.store.edit { it[kFallback] = on } }
+    suspend fun setReduceMotion(on: Boolean) { context.store.edit { it[kReduceMotion] = on } }
 
     private fun defaultName(): String = Build.MODEL?.take(24)?.ifBlank { null } ?: "Mon téléphone"
 }

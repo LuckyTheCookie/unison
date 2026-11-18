@@ -421,6 +421,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setAnimatedBackground(on: Boolean) = viewModelScope.launch { graph.prefs.setAnimatedBackground(on) }
     fun setBassBoost(on: Boolean) = viewModelScope.launch { graph.prefs.setBassBoost(on) }
     fun setBassLevel(level: Int) = viewModelScope.launch { graph.prefs.setBassLevel(level) }
+    fun setReduceMotion(on: Boolean) = viewModelScope.launch { graph.prefs.setReduceMotion(on) }
 
     // --- Sources audio ---
 

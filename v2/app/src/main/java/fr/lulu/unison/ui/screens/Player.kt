@@ -82,6 +82,20 @@ import fr.lulu.unison.model.QueueItem
 import fr.lulu.unison.model.RepeatMode
 import fr.lulu.unison.model.SessionSnapshot
 import fr.lulu.unison.session.Cmd
+import fr.lulu.unison.lyrics.LyricFade
+import fr.lulu.unison.ui.LocalReduceMotion
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.unit.sp
 import fr.lulu.unison.source.QualityTier
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -191,6 +205,16 @@ fun PlayerScreen(vm: AppViewModel, page: PlayerPage, onPage: (PlayerPage) -> Uni
                     )
                 }
             }
+            // Paroles « en petit » : la ligne chantée, au-dessus de la barre, quand la pochette est affichée.
+            val lyricsUi by vm.lyrics.collectAsState()
+            val strip = (lyricsUi as? LyricsUi.Ready)?.takeIf { it.trackId == track?.id && it.lyrics.synced && it.lyrics.lines.isNotEmpty() }?.lyrics
+            AnimatedVisibility(
+                page == PlayerPage.Art && strip != null,
+                enter = fadeIn(tween(Motion.Slow)) + expandVertically(tween(Motion.Slow, easing = Motion.Ease)),
+                exit = fadeOut(tween(Motion.Fast)) + shrinkVertically(tween(Motion.Slow, easing = Motion.Ease)),
+            ) {
+                strip?.let { LyricStrip(it, vm, onOpen = { onPage(PlayerPage.Lyrics) }, modifier = Modifier.padding(horizontal = 28.dp).padding(top = 10.dp)) }
+            }
             SeekBar(vm, Modifier.padding(horizontal = 28.dp).padding(top = 14.dp))
             Transport(vm, snap)
             Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -235,7 +259,13 @@ private fun ArtPage(
     onNext: () -> Unit,
     onPrevious: () -> Unit,
 ) {
-    val scale by animateFloatAsState(if (playing) 1f else 0.9f, spring(dampingRatio = 0.72f, stiffness = 280f), label = "art")
+    // En pause, la pochette se réduit et revient en ressort souple à la reprise.
+    val reduce = LocalReduceMotion.current
+    val scale by animateFloatAsState(
+        if (playing) 1f else 0.86f,
+        if (reduce) snap() else spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow),
+        label = "art",
+    )
     val offset = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
@@ -362,7 +392,12 @@ fun SeekBar(vm: AppViewModel, modifier: Modifier = Modifier) {
     var dragging by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
     val fraction = if (dragging) dragFraction else if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
-    val thickness by animateDpAsState(if (dragging) 8.dp else 4.dp, label = "bar")
+    // La barre s'épaissit sous le doigt, avec un léger rebond.
+    val thickness by animateDpAsState(
+        if (dragging) 12.dp else 6.dp,
+        if (LocalReduceMotion.current) snap() else spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+        label = "bar",
+    )
     val enabled = duration > 0
 
     Column(modifier.fillMaxWidth()) {
@@ -384,8 +419,8 @@ fun SeekBar(vm: AppViewModel, modifier: Modifier = Modifier) {
         ) {
             Canvas(Modifier.fillMaxWidth().height(thickness)) {
                 val r = CornerRadius(size.height / 2)
-                drawRoundRect(Color.White.copy(alpha = 0.22f), cornerRadius = r)
-                drawRoundRect(Color.White, size = Size(size.width * fraction, size.height), cornerRadius = r)
+                drawRoundRect(Color.White.copy(alpha = 0.24f), cornerRadius = r)
+                drawRoundRect(Color.White.copy(alpha = 0.92f), size = Size(size.width * fraction, size.height), cornerRadius = r)
             }
         }
         Box(Modifier.fillMaxWidth()) {
@@ -409,13 +444,13 @@ private fun QualityBadge(tier: QualityTier?, format: String?, modifier: Modifier
         label = "qualité",
     ) { t ->
         if (t == null) { Spacer(Modifier.height(16.dp)); return@AnimatedContent }
-        val sweep = t != QualityTier.HIGH
+        val sweep = t != QualityTier.HIGH && !LocalReduceMotion.current
         val shimmer = rememberInfiniteTransition(label = "reflet")
         val phase = shimmer.animateFloat(0f, 1f, infiniteRepeatable(tween(3_000, easing = LinearEasing)), label = "phase")
         Row(
             Modifier
                 .semantics { contentDescription = listOfNotNull(t.label, format).joinToString(", ") }
-                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen; alpha = if (sweep) 0.7f else 0.5f }
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen; alpha = if (t != QualityTier.HIGH) 0.7f else 0.5f }
                 .drawWithContent {
                     drawContent()
                     if (!sweep) return@drawWithContent
@@ -428,7 +463,7 @@ private fun QualityBadge(tier: QualityTier?, format: String?, modifier: Modifier
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Glyph(if (sweep) R.drawable.ic_sparkles_fill else R.drawable.ic_headphone_line, tint = Ink.Primary, size = 12.dp)
+            Glyph(if (t != QualityTier.HIGH) R.drawable.ic_sparkles_fill else R.drawable.ic_headphone_line, tint = Ink.Primary, size = 12.dp)
             Spacer(Modifier.width(4.dp))
             Text(t.label, style = Type.Time.copy(fontWeight = androidx.compose.ui.text.font.FontWeight(600)), color = Ink.Primary)
         }
@@ -473,6 +508,53 @@ private fun ModeBtn(icon: Int, label: String, on: Boolean, onClick: () -> Unit) 
 
 // --- Paroles ---
 
+/**
+ * Bandeau d'une ligne au-dessus de la barre : la ligne chantée glisse vers le haut en fondu quand la suivante
+ * arrive (340 ms), et s'estompe juste avant sa fin pour que la nouvelle entre à pleine force. Hauteur de ligne
+ * fixe : la pochette ne bouge pas d'une écriture à l'autre. Toucher ouvre les paroles complètes.
+ */
+@Composable
+private fun LyricStrip(lyrics: Lyrics, vm: AppViewModel, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    val reduce = LocalReduceMotion.current
+    val clock = remember { mutableLongStateOf(vm.positionMs()) }
+    LaunchedEffect(Unit) { while (true) withFrameNanos { clock.longValue = vm.positionMs() } }
+    val index by remember(lyrics) { derivedStateOf { lyrics.indexAt(clock.longValue + 150) } }
+    Box(
+        modifier.fillMaxWidth().height(STRIP_HEIGHT).clipToBounds().pressable(scale = 0.98f, onClick = onOpen),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        AnimatedContent(
+            index,
+            transitionSpec = {
+                if (reduce) EnterTransition.None togetherWith ExitTransition.None
+                else (slideInVertically(tween(340, easing = FastOutSlowInEasing)) { (it * 0.35f).toInt() } + fadeIn(tween(340, easing = FastOutSlowInEasing))) togetherWith
+                    (slideOutVertically(tween(340, easing = FastOutSlowInEasing)) { -(it * 0.35f).toInt() } + fadeOut(tween(340, easing = FastOutSlowInEasing)))
+            },
+            label = "ligne",
+        ) { i ->
+            val line = lyrics.lines.getOrNull(i)
+            val text = line?.text?.takeIf { it.isNotBlank() }
+            Text(
+                text ?: "♪",
+                style = StripStyle,
+                color = Ink.Primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().graphicsLayer {
+                    alpha = when {
+                        text == null -> 0.5f
+                        reduce -> 0.78f
+                        else -> LyricFade.alpha(lyrics, i, clock.longValue)
+                    }
+                },
+            )
+        }
+    }
+}
+
+private val STRIP_HEIGHT = 24.dp
+private val StripStyle = Type.PlayerArtist.copy(fontWeight = androidx.compose.ui.text.font.FontWeight(600), lineHeight = 20.sp)
+
 @Composable
 private fun LyricsPage(vm: AppViewModel) {
     val ui by vm.lyrics.collectAsState()
@@ -516,8 +598,9 @@ private fun SyncedLyrics(lyrics: Lyrics, vm: AppViewModel) {
             itemsIndexed(lyrics.lines) { i, line ->
                 val isActive = i == active
                 // Lignes passées : pleines ; ligne en cours : remplie au fil du chant ; à venir : estompées.
-                val alpha by animateFloatAsState(if (isActive) 1f else if (i < active) 0.5f else 0.85f, tween(320, easing = Motion.Ease), label = "a")
-                val scale by animateFloatAsState(if (isActive) 1.03f else 0.96f, tween(320, easing = Motion.Ease), label = "s")
+                val spec = if (LocalReduceMotion.current) snap() else tween<Float>(320, easing = Motion.Ease)
+                val alpha by animateFloatAsState(if (isActive) 1f else if (i < active) 0.5f else 0.85f, spec, label = "a")
+                val scale by animateFloatAsState(if (isActive) 1.03f else 0.96f, spec, label = "s")
                 KaraokeLine(
                     line,
                     filled = {

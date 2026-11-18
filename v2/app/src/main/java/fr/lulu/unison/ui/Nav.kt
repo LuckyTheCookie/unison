@@ -53,5 +53,8 @@ val LocalNav = staticCompositionLocalOf<Nav> { error("Nav absent") }
 /** Hauteur occupée en bas par la barre d'onglets et le mini-lecteur : les listes la laissent libre. */
 val LocalBottomInset = staticCompositionLocalOf<Dp> { 0.dp }
 
+/** « Réduire les animations » (réglages) : les animations du lecteur passent sans transition. */
+val LocalReduceMotion = staticCompositionLocalOf { false }
+
 /** État des téléchargements par identifiant de titre : chaque ligne de titre affiche le sien. */
 val LocalDownloads = compositionLocalOf<Map<String, DownloadStatus>> { emptyMap() }

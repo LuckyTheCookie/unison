@@ -276,3 +276,29 @@ class SafeFileNameTest {
         assertFalse(src == fr.lulu.unison.source.SourceTrackId.fileName("src:s1::autre"))
     }
 }
+
+class LyricFadeTest {
+    private val lyrics = fr.lulu.unison.lyrics.Lyrics(
+        listOf(
+            fr.lulu.unison.lyrics.LyricLine(0, "Une"),
+            fr.lulu.unison.lyrics.LyricLine(4_000, "Deux"),
+            fr.lulu.unison.lyrics.LyricLine(4_300, "Trois"),
+        ),
+        synced = true, source = "test",
+    )
+    private fun alpha(i: Int, at: Long) = fr.lulu.unison.lyrics.LyricFade.alpha(lyrics, i, at)
+
+    @Test fun linesFadeJustBeforeTheNextOne() {
+        // Ligne de 4 s : fondu sur 28 % de sa durée, plafonné à 700 ms.
+        assertEquals(0.78f, alpha(0, 1_000), 0.001f)
+        assertEquals(0.78f, alpha(0, 3_300), 0.001f)
+        assertEquals(0.39f, alpha(0, 3_650), 0.001f)
+        assertEquals(0f, alpha(0, 4_000), 0.001f)
+        // Ligne de 300 ms : fondu d'au moins 160 ms.
+        assertEquals(0.78f, alpha(1, 4_100), 0.001f)
+        assertEquals(0.39f, alpha(1, 4_220), 0.001f)
+        // Dernière ligne : durée supposée de 5 s.
+        assertEquals(0.78f, alpha(2, 5_000), 0.001f)
+        assertEquals(0f, alpha(2, 9_300), 0.001f)
+    }
+}

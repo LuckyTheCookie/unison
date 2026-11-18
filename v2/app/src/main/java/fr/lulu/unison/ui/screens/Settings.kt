@@ -151,6 +151,10 @@ fun SettingsScreen(vm: AppViewModel) {
                 SwitchRow("Fond animé", "Le fond tiré de la pochette ondule doucement. Le couper économise un peu de batterie.", settings.animatedBackground) {
                     vm.setAnimatedBackground(!settings.animatedBackground)
                 }
+                Divider()
+                SwitchRow("Réduire les animations", "La pochette, la barre de lecture, les paroles et le libellé de qualité changent sans transition.", settings.reduceMotion) {
+                    vm.setReduceMotion(!settings.reduceMotion)
+                }
             }
 
             Label("Application")

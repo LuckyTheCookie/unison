@@ -287,3 +287,22 @@ object Karaoke {
         return chars
     }
 }
+
+/**
+ * Fondu de fin de ligne du bandeau de paroles : une ligne reste à 0,78 d'opacité puis s'estompe sur
+ * 28 % de sa durée (entre 160 et 700 ms) avant que la suivante commence ; la suivante arrive donc à pleine force.
+ */
+object LyricFade {
+    const val MAX_ALPHA = 0.78f
+    /** Durée supposée de la dernière ligne, faute de ligne suivante. */
+    private const val LAST_LINE_MS = 5_000L
+
+    fun alpha(lyrics: Lyrics, index: Int, positionMs: Long): Float {
+        val line = lyrics.lines.getOrNull(index) ?: return MAX_ALPHA
+        val end = lyrics.lines.getOrNull(index + 1)?.timeMs ?: (line.timeMs + LAST_LINE_MS)
+        val duration = (end - line.timeMs).coerceAtLeast(1)
+        val fade = (duration * 0.28).toLong().coerceIn(160, 700)
+        val remaining = end - positionMs
+        return MAX_ALPHA * (remaining.toFloat() / fade).coerceIn(0f, 1f)
+    }
+}
