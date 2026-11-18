@@ -22,7 +22,9 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - **Gapless playback**: the next track is prepared while the current one plays, so changing track never cuts the sound.
 - **Swipe the artwork** to skip to the next track or go back to the previous one.
 - **Smooth predictive back** for the player, the "Together" screen and navigation.
-- **Queue**: play next, add to queue, reorder, shuffle, repeat, and an automatic radio that keeps the music going.
+- **Queue**: play next, add to queue, reorder, repeat, and an automatic radio that keeps the music going.
+- **Shuffle mode** you can switch on and off like repeat: switching it off puts the remaining tracks back in their original order. The state is shared in a session.
+- **Bass Booster** (Settings > Playback): five levels, applied on the phone with a bass shelf filter and a limiter, so it works on every device and on downloaded tracks.
 - **Library on the phone**: favourites, playlists, saved albums, followed artists and listening history.
 
 ### 🎤 Word-by-word lyrics
@@ -82,6 +84,7 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - **Sync** (`PlaybackController`, `SyncPolicy`): under 25 ms nothing, up to 150 ms a ±3 % speed nudge, beyond that a seek. Alone, the anchor follows the player instead.
 - **Gapless** (`Gapless`): ExoPlayer holds the current and the next track; the session switches to the prepared item instead of reloading.
 - **Streams** are resolved by [InnerTubeX](https://github.com/MetrolistGroup/innertubex) just before playback, fetched in bounded ranges, and read from the permanent downloads cache first (`offline/`).
+- **Bass Booster** (`BassBoost`): a Media3 audio processor (low-shelf biquad around 100 Hz, input headroom, limiter), updated live without reloading the track.
 - **Library** (`library/`, `artists/`): Room database for favourites, playlists, history, downloads and followed artists.
 - **Import** (`importer/`): a RFC 4180 CSV parser with columns detected by header name, then a scored YouTube Music search per line.
 
