@@ -13,6 +13,8 @@ import fr.lulu.unison.lyrics.LyricsRepository
 import fr.lulu.unison.playback.AutoQueue
 import fr.lulu.unison.playback.PlaybackController
 import fr.lulu.unison.session.SessionManager
+import fr.lulu.unison.source.SourceResolver
+import fr.lulu.unison.source.YouTubeSource
 import fr.lulu.unison.update.UpdateManager
 import fr.lulu.unison.youtube.MusicCatalog
 import fr.lulu.unison.youtube.YouTubeCatalog
@@ -48,14 +50,16 @@ class AppGraph(app: Application) {
         quality = { settings.value.quality },
     )
     val catalog: MusicCatalog = YouTubeCatalog(youtube)
+    /** Résolution des flux : YouTube Music, ou la source importée choisie dans les réglages. */
+    val resolver = SourceResolver(YouTubeSource(youtube, catalog))
     val library = Library(app)
     val lyrics = LyricsRepository(http, File(app.filesDir, "offline/lyrics"))
     val sessions = SessionManager(app, prefs)
     /** Base partagée par le cache de lecture et celui des téléchargements. */
     private val mediaDb = StandaloneDatabaseProvider(app)
     val connectivity = Connectivity(app)
-    val downloads = Downloads(app, http, youtube, library, lyrics, prefs, mediaDb, scope)
-    val playback = PlaybackController(app, sessions, youtube, prefs, http, mediaDb, downloads, connectivity)
+    val downloads = Downloads(app, http, resolver, library, lyrics, prefs, mediaDb, scope)
+    val playback = PlaybackController(app, sessions, resolver, prefs, http, mediaDb, downloads, connectivity)
     val updates = UpdateManager(app, http)
     val subscriptions = Subscriptions(library, catalog, scope)
     val importer = Importer(app, library, catalog, scope, followArtists = subscriptions::importArtists)

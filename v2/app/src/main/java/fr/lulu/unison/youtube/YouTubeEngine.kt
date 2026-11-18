@@ -11,6 +11,7 @@ import com.metrolist.innertubex.extraction.InnerTubeExtractor
 import com.metrolist.innertubex.extraction.YtConfigParserImpl
 import com.metrolist.innertubex.models.YouTubeClient
 import com.metrolist.innertubex.models.YouTubeLocale
+import fr.lulu.unison.source.StreamUnavailableException
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.compression.ContentEncoding
@@ -40,19 +41,12 @@ class ResolvedStream(
     override fun toString() = "ResolvedStream($videoId, itag=$itag, $mimeType)"
 }
 
-class StreamUnavailableException(message: String, cause: Throwable? = null) : java.io.IOException(message, cause)
-
-/** D'où vient le son. Isolé derrière une interface pour pouvoir changer de moteur si YouTube casse celui-ci. */
-interface StreamResolver {
-    suspend fun resolve(videoId: String): ResolvedStream
-    fun invalidate(videoId: String)
-}
-
 enum class Quality(val label: String) { HIGH("Élevée"), LOW("Économie de données") }
 
 /**
  * Accès à YouTube Music par son API interne (InnerTubeX, le moteur de Metrolist) :
  * requêtes brutes pour le catalogue et résolution des flux audio. Sans compte.
+ * Pour le lecteur, c'est [fr.lulu.unison.source.YouTubeSource] qui l'expose comme une source parmi d'autres.
  */
 class YouTubeEngine(
     okHttp: OkHttpClient,
@@ -60,7 +54,7 @@ class YouTubeEngine(
     language: String = "fr",
     private val quality: () -> Quality = { Quality.HIGH },
     private val nowMs: () -> Long = System::currentTimeMillis,
-) : StreamResolver {
+) {
     private val http = HttpClient(OkHttp) {
         engine { preconfigured = okHttp }
         install(ContentNegotiation) {
@@ -82,7 +76,7 @@ class YouTubeEngine(
     private val streams = ConcurrentHashMap<String, ResolvedStream>()
     private val locks = ConcurrentHashMap<String, Mutex>()
 
-    override suspend fun resolve(videoId: String): ResolvedStream {
+    suspend fun resolve(videoId: String): ResolvedStream {
         cached(videoId)?.let { return it }
         return locks.getOrPut(videoId) { Mutex() }.withLock {
             cached(videoId) ?: extract(videoId).also {
@@ -94,7 +88,7 @@ class YouTubeEngine(
 
     private fun cached(videoId: String) = streams[videoId]?.takeIf { it.expiresAtMs - nowMs() > EXPIRY_MARGIN_MS }
 
-    override fun invalidate(videoId: String) {
+    fun invalidate(videoId: String) {
         streams.remove(videoId)
     }
 

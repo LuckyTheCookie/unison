@@ -45,9 +45,12 @@ import fr.lulu.unison.model.QueueItem
 import fr.lulu.unison.model.SessionSnapshot
 import fr.lulu.unison.session.Cmd
 import fr.lulu.unison.session.SessionManager
+import fr.lulu.unison.source.StreamResolver
+import fr.lulu.unison.source.StreamUnavailableException
+import fr.lulu.unison.source.TrackRef
+import fr.lulu.unison.source.TrackUri
+import fr.lulu.unison.source.toRequest
 import fr.lulu.unison.youtube.ChunkedDataSource
-import fr.lulu.unison.youtube.StreamResolver
-import fr.lulu.unison.youtube.StreamUnavailableException
 import fr.lulu.unison.youtube.YtParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -310,7 +313,7 @@ class PlaybackController(
         val t = item.track
         return MediaItem.Builder()
             .setMediaId(item.uid)
-            .setUri(Uri.parse("$SCHEME://track/${t.id}"))
+            .setUri(Uri.parse(TrackUri.build(t)))
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(t.title)
@@ -367,8 +370,10 @@ class PlaybackController(
             scope.launch { if (loaded != null) prepareNext(Gapless.upcoming(sessions.snapshot.value)) }
             return
         }
+        val ref = TrackRef.of(next.track)
+        val request = settings.quality.toRequest()
         prefetchJob = scope.launch {
-            val stream = runCatching { withContext(Dispatchers.IO) { streams.resolve(id) } }
+            val stream = runCatching { withContext(Dispatchers.IO) { streams.resolve(ref, request) } }
                 .onFailure {
                     if (it is CancellationException) return@onFailure
                     if (it is StreamUnavailableException) unplayable += id
@@ -384,7 +389,7 @@ class PlaybackController(
                 runInterruptible(Dispatchers.IO) {
                     val spec = DataSpec.Builder()
                         .setUri(Uri.parse(stream.url))
-                        .setKey(cacheKey(id, stream.itag))
+                        .setKey(stream.cacheKey)
                         .setHttpRequestHeaders(stream.headers)
                         .setLength(PREFETCH_BYTES)
                         .build()
@@ -493,20 +498,22 @@ class PlaybackController(
         // Titre téléchargé : lu dans le cache permanent, sans réseau ; sinon cache de lecture puis YouTube.
         val offline = CacheDataSource.Factory().setCache(downloads.cache).setCacheWriteDataSinkFactory(null)
         val cached = DataSource.Factory { OfflineFirstDataSource(offline.createDataSource(), cacheFactory.createDataSource()) }
-        // L'adresse réelle du flux n'est demandée à YouTube qu'au moment de lire (elle expire en quelques heures).
-        // Pour le titre suivant, elle a déjà été obtenue par [prefetch] : la résolution ci-dessous est immédiate.
+        // L'adresse réelle du flux n'est demandée à la source qu'au moment de lire (elle expire souvent en
+        // quelques heures). Pour le titre suivant, elle a déjà été obtenue par [prefetch] : la résolution
+        // ci-dessous est immédiate.
         val resolving = ResolvingDataSource.Factory(cached) { spec ->
-            if (spec.uri.scheme != SCHEME) return@Factory spec
-            val id = spec.uri.lastPathSegment ?: throw StreamUnavailableException("Titre invalide")
+            if (spec.uri.scheme != TrackUri.SCHEME) return@Factory spec
+            val ref = TrackUri.parse(spec.uri.toString()) ?: throw StreamUnavailableException("Titre invalide")
+            val id = ref.id
             if (downloads.isComplete(id)) {
                 main.post { loudness[id] = downloads.loudnessOf(id); applyVolume() }
                 return@Factory spec.buildUpon().setKey(Downloads.cacheKey(id)).build()
             }
-            val stream = runBlocking { streams.resolve(id) }
+            val stream = runBlocking { streams.resolve(ref, settings.quality.toRequest()) }
             main.post { loudness[id] = stream.loudnessDb; applyVolume() }
             spec.buildUpon()
                 .setUri(Uri.parse(stream.url))
-                .setKey(cacheKey(id, stream.itag))
+                .setKey(stream.cacheKey)
                 .setHttpRequestHeaders(stream.headers)
                 .build()
         }
@@ -537,8 +544,6 @@ class PlaybackController(
             .setUpstreamDataSourceFactory(ChunkedDataSource.Factory(OkHttpDataSource.Factory(okHttp)))
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }
-
-    private fun cacheKey(id: String, itag: Int) = "$id.$itag"
 
     /**
      * Journal de contrôle (adb logcat -s UnisonPlayer) : un enchaînement réussi ne recrée pas la sortie audio
@@ -689,7 +694,6 @@ class PlaybackController(
 
     private companion object {
         const val TAG = "UnisonPlayer"
-        const val SCHEME = "unison"
         const val TICK_MS = 250L
         const val PAUSED_TOLERANCE_MS = 400L
         const val SOLO_TOLERANCE_MS = 400L

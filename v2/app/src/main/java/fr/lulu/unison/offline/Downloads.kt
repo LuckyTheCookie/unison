@@ -19,8 +19,10 @@ import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.library.Library
 import fr.lulu.unison.lyrics.LyricsRepository
 import fr.lulu.unison.model.Track
+import fr.lulu.unison.source.StreamResolver
+import fr.lulu.unison.source.TrackUri
+import fr.lulu.unison.source.toRequest
 import fr.lulu.unison.youtube.ChunkedDataSource
-import fr.lulu.unison.youtube.StreamResolver
 import fr.lulu.unison.youtube.YtParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
@@ -108,9 +111,11 @@ class Downloads(
         // L'adresse du flux est demandée au moment de télécharger ; la clé de cache reste celle du titre.
         // Requêtes bornées : sans fin annoncée, YouTube bride le téléchargement au débit de lecture.
         ResolvingDataSource.Factory(ChunkedDataSource.Factory(OkHttpDataSource.Factory(http))) { spec ->
-            val id = spec.uri.lastPathSegment
-            if (spec.uri.scheme != SCHEME || id == null) return@Factory spec
-            val stream = runBlocking { streams.resolve(id) }
+            if (spec.uri.scheme != TrackUri.SCHEME) return@Factory spec
+            val ref = TrackUri.parse(spec.uri.toString()) ?: return@Factory spec
+            val id = ref.id
+            val quality = runBlocking { prefs.settings.first() }.quality
+            val stream = runBlocking { streams.resolve(ref, quality.toRequest(), StreamResolver.Purpose.DOWNLOAD) }
             stream.loudnessDb?.let { loudness[id] = it }
             scope.launch(Dispatchers.IO) { library.setDownloadFormat(id, stream.itag, stream.loudnessDb) }
             spec.buildUpon().setUri(Uri.parse(stream.url)).setHttpRequestHeaders(stream.headers).build()
@@ -213,7 +218,7 @@ class Downloads(
         runCatching(action).onFailure { Log.w(TAG, "service de téléchargement", it) }
     }
 
-    private fun request(t: Track) = DownloadRequest.Builder(t.id, Uri.parse("$SCHEME://track/${t.id}"))
+    private fun request(t: Track) = DownloadRequest.Builder(t.id, Uri.parse(TrackUri.build(t)))
         .setCustomCacheKey(cacheKey(t.id))
         .build()
 
@@ -266,7 +271,6 @@ class Downloads(
 
     companion object {
         private const val TAG = "UnisonDownloads"
-        private const val SCHEME = "unison"
         private const val STOP_USER = 1
         const val KEY_PREFIX = "dl:"
 
