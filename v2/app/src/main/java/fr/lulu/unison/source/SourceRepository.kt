@@ -36,6 +36,8 @@ data class SourceConfig(
     val pickedQuality: String? = null,
     /** Valeurs par défaut des réglages du manifest, renvoyées en paramètres de requête. */
     val defaults: Map<String, String> = emptyMap(),
+    /** La source a une adresse `/stream` ; sinon les flux viennent des lignes de recherche. */
+    val streamEndpoint: Boolean = true,
     val addedAt: Long = 0,
 ) {
     companion object {

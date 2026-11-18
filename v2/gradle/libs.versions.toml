@@ -70,6 +70,7 @@ play-services-nearby = { module = "com.google.android.gms:play-services-nearby",
 backdrop = { module = "io.github.kyant0:backdrop", version.ref = "backdrop" }
 reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reorderable" }
 junit = { module = "junit:junit", version.ref = "junit" }
+mockwebserver = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

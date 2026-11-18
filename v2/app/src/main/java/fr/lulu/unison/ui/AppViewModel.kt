@@ -20,7 +20,9 @@ import fr.lulu.unison.model.JoinInfo
 import fr.lulu.unison.model.Track
 import fr.lulu.unison.model.TransportKind
 import fr.lulu.unison.session.Cmd
+import fr.lulu.unison.source.ManifestSource
 import fr.lulu.unison.source.SourceConfig
+import fr.lulu.unison.source.SourceHealth
 import fr.lulu.unison.source.SourceIds
 import fr.lulu.unison.youtube.ArtistPage
 import fr.lulu.unison.youtube.CollectionPage
@@ -56,6 +58,14 @@ sealed interface LyricsUi {
     data class Loading(val trackId: String) : LyricsUi
     data class Ready(val trackId: String, val lyrics: Lyrics) : LyricsUi
     data class Missing(val trackId: String) : LyricsUi
+}
+
+/** Étapes de l'ajout d'une source importée. */
+sealed interface AddSourceUi {
+    data object Idle : AddSourceUi
+    data class Entering(val url: String = "", val error: String? = null) : AddSourceUi
+    data class Checking(val url: String) : AddSourceUi
+    data class Confirm(val url: String, val inspection: ManifestSource.Companion.Inspection) : AddSourceUi
 }
 
 /** Ce qui se passe côté « écouter ensemble ». */
@@ -404,9 +414,53 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun removeSource(id: String) = viewModelScope.launch {
         val name = graph.sources.get(id)?.name ?: return@launch
         if (settings.value.activeSource == id) graph.prefs.setActiveSource(SourceIds.YOUTUBE)
-        graph.sources.remove(id)
+        graph.sourceHub.remove(id)
+        _sourceHealth.value -= id
         toast("Source « $name » retirée")
     }
+
+    fun setSourceQuality(id: String, value: String) = graph.sourceHub.setQuality(id, value)
+
+    private val _sourceHealth = MutableStateFlow<Map<String, SourceHealth>>(emptyMap())
+    /** Dernier test de santé de chaque source importée. */
+    val sourceHealth: StateFlow<Map<String, SourceHealth>> = _sourceHealth.asStateFlow()
+
+    /** Teste toutes les sources importées (à l'ouverture des réglages). */
+    fun refreshSourceHealth() = sources.value.forEach { s ->
+        viewModelScope.launch { _sourceHealth.value += s.id to graph.sourceHub.health(s.id) }
+    }
+
+    private val _addSource = MutableStateFlow<AddSourceUi>(AddSourceUi.Idle)
+    /** Ajout d'une source : saisie de l'adresse, vérification, puis confirmation. */
+    val addSource: StateFlow<AddSourceUi> = _addSource.asStateFlow()
+    private var inspectJob: Job? = null
+
+    fun startAddSource() { _addSource.value = AddSourceUi.Entering() }
+
+    /** Lit le manifest à [url] et fait le test de santé ; rien n'est enregistré avant confirmation. */
+    fun inspectSource(url: String) {
+        inspectJob?.cancel()
+        _addSource.value = AddSourceUi.Checking(url)
+        inspectJob = viewModelScope.launch {
+            _addSource.value = when (val r = graph.sourceHub.inspect(url)) {
+                is ManifestSource.Companion.InspectResult.Ready -> AddSourceUi.Confirm(url, r.inspection)
+                is ManifestSource.Companion.InspectResult.Refused -> AddSourceUi.Entering(url, r.reason)
+            }
+        }
+    }
+
+    /** Enregistre la source vérifiée et la choisit comme source des flux. */
+    fun confirmSource() {
+        val c = (_addSource.value as? AddSourceUi.Confirm)?.inspection ?: return
+        if (c.health != SourceHealth.Ok) return
+        graph.sourceHub.add(c.config)
+        _sourceHealth.value += c.config.id to c.health
+        viewModelScope.launch { graph.prefs.setActiveSource(c.config.id) }
+        _addSource.value = AddSourceUi.Idle
+        toast("Source « ${c.config.name} » ajoutée")
+    }
+
+    fun dismissAddSource() { inspectJob?.cancel(); _addSource.value = AddSourceUi.Idle }
 
     // En dernier : tous les champs ci-dessus doivent exister avant le premier chargement.
     init {

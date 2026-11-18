@@ -13,7 +13,10 @@ import fr.lulu.unison.lyrics.LyricsRepository
 import fr.lulu.unison.playback.AutoQueue
 import fr.lulu.unison.playback.PlaybackController
 import fr.lulu.unison.session.SessionManager
+import fr.lulu.unison.source.SourceHub
+import fr.lulu.unison.source.SourcePolicy
 import fr.lulu.unison.source.SourceRepository
+import fr.lulu.unison.source.StreamGuard
 import fr.lulu.unison.source.SourceResolver
 import fr.lulu.unison.source.YouTubeSource
 import fr.lulu.unison.update.UpdateManager
@@ -53,6 +56,10 @@ class AppGraph(app: Application) {
     val catalog: MusicCatalog = YouTubeCatalog(youtube)
     /** Sources importées par l'utilisateur (aucune par défaut). */
     val sources = SourceRepository(File(app.filesDir, "sources.json"))
+    /** Garde des flux des sources importées, posée sur le client HTTP du lecteur et des téléchargements. */
+    private val streamGuard = StreamGuard()
+    val sourceHub = SourceHub(sources, SourcePolicy(debugLocal = BuildConfig.DEBUG), http, streamGuard, "Unison/${BuildConfig.VERSION_NAME}")
+    private val mediaHttp: OkHttpClient = http.newBuilder().addNetworkInterceptor(streamGuard.interceptor).build()
     /** Résolution des flux : YouTube Music, ou la source importée choisie dans les réglages. */
     val resolver = SourceResolver(YouTubeSource(youtube, catalog))
     val library = Library(app)
@@ -61,8 +68,8 @@ class AppGraph(app: Application) {
     /** Base partagée par le cache de lecture et celui des téléchargements. */
     private val mediaDb = StandaloneDatabaseProvider(app)
     val connectivity = Connectivity(app)
-    val downloads = Downloads(app, http, resolver, library, lyrics, prefs, mediaDb, scope)
-    val playback = PlaybackController(app, sessions, resolver, prefs, http, mediaDb, downloads, connectivity)
+    val downloads = Downloads(app, mediaHttp, resolver, library, lyrics, prefs, mediaDb, scope)
+    val playback = PlaybackController(app, sessions, resolver, prefs, mediaHttp, mediaDb, downloads, connectivity)
     val updates = UpdateManager(app, http)
     val subscriptions = Subscriptions(library, catalog, scope)
     val importer = Importer(app, library, catalog, scope, followArtists = subscriptions::importArtists)
