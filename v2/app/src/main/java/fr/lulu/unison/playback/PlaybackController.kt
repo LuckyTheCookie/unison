@@ -42,6 +42,7 @@ import fr.lulu.unison.model.QueueItem
 import fr.lulu.unison.model.SessionSnapshot
 import fr.lulu.unison.session.Cmd
 import fr.lulu.unison.session.SessionManager
+import fr.lulu.unison.youtube.ChunkedDataSource
 import fr.lulu.unison.youtube.StreamResolver
 import fr.lulu.unison.youtube.StreamUnavailableException
 import fr.lulu.unison.youtube.YtParser
@@ -502,7 +503,8 @@ class PlaybackController(
         val cache = SimpleCache(File(context.cacheDir, "audio"), LeastRecentlyUsedCacheEvictor(cacheBytes), databaseProvider)
         CacheDataSource.Factory()
             .setCache(cache)
-            .setUpstreamDataSourceFactory(OkHttpDataSource.Factory(okHttp))
+            // Requêtes bornées : YouTube sert alors à pleine vitesse (le suivant et les sauts se chargent d'un coup).
+            .setUpstreamDataSourceFactory(ChunkedDataSource.Factory(OkHttpDataSource.Factory(okHttp)))
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }
 

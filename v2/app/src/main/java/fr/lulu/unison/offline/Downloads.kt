@@ -19,6 +19,7 @@ import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.library.Library
 import fr.lulu.unison.lyrics.LyricsRepository
 import fr.lulu.unison.model.Track
+import fr.lulu.unison.youtube.ChunkedDataSource
 import fr.lulu.unison.youtube.StreamResolver
 import fr.lulu.unison.youtube.YtParser
 import kotlinx.coroutines.CompletableDeferred
@@ -92,7 +93,8 @@ class Downloads(
     val manager: DownloadManager = DownloadManager(
         context, databaseProvider, cache,
         // L'adresse du flux est demandée au moment de télécharger ; la clé de cache reste celle du titre.
-        ResolvingDataSource.Factory(OkHttpDataSource.Factory(http)) { spec ->
+        // Requêtes bornées : sans fin annoncée, YouTube bride le téléchargement au débit de lecture.
+        ResolvingDataSource.Factory(ChunkedDataSource.Factory(OkHttpDataSource.Factory(http))) { spec ->
             val id = spec.uri.lastPathSegment
             if (spec.uri.scheme != SCHEME || id == null) return@Factory spec
             val stream = runBlocking { streams.resolve(id) }
