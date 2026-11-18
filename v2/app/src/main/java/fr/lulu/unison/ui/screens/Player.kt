@@ -110,7 +110,7 @@ fun rememberPosition(vm: AppViewModel, periodMs: Long = 120): Long {
 
 /** Lecteur plein écran : pochette, paroles ou file, avec les commandes toujours sous le pouce. */
 @Composable
-fun PlayerScreen(vm: AppViewModel, page: PlayerPage, onPage: (PlayerPage) -> Unit, onClose: () -> Unit) {
+fun PlayerScreen(vm: AppViewModel, page: PlayerPage, onPage: (PlayerPage) -> Unit, onClose: () -> Unit, gesturing: Boolean = false) {
     val nav = LocalNav.current
     val snap by vm.snapshot.collectAsState()
     val settings by vm.settings.collectAsState()
@@ -123,7 +123,8 @@ fun PlayerScreen(vm: AppViewModel, page: PlayerPage, onPage: (PlayerPage) -> Uni
             detectVerticalDragGestures(onDragStart = { total = 0f }, onDragEnd = { if (total > 140f) onClose() }) { _, dy -> total += dy }
         },
     ) {
-        KawarpBackground(track?.cover, Modifier.fillMaxSize(), dim = if (page == PlayerPage.Art) 0.22f else 0.42f, animated = settings.animatedBackground)
+        // Pendant un geste de retour, le fond se fige : chaque image du geste reste fluide.
+        KawarpBackground(track?.cover, Modifier.fillMaxSize(), dim = if (page == PlayerPage.Art) 0.22f else 0.42f, animated = settings.animatedBackground && !gesturing)
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconBtn(R.drawable.ic_down_line, "Réduire", onClose)

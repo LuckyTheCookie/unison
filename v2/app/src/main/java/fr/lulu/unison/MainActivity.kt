@@ -16,8 +16,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -69,6 +70,7 @@ import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.LocalBottomInset
 import fr.lulu.unison.ui.LocalNav
 import fr.lulu.unison.ui.Nav
+import fr.lulu.unison.ui.PredictiveSheet
 import fr.lulu.unison.ui.components.Cover
 import fr.lulu.unison.ui.components.Glyph
 import fr.lulu.unison.ui.components.IconBtn
@@ -228,8 +230,10 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
                     navController, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize(),
                     enterTransition = { fadeIn(tween(Motion.Page, easing = Motion.Ease)) + slideInVertically(tween(Motion.Page, easing = Motion.Ease)) { 24 } },
                     exitTransition = { fadeOut(tween(Motion.Fast)) },
-                    popEnterTransition = { fadeIn(tween(Motion.Page, easing = Motion.Ease)) },
-                    popExitTransition = { fadeOut(tween(Motion.Fast)) },
+                    // Retour (y compris prédictif, que le geste fait avancer) : la page quitte en rétrécissant,
+                    // celle d'en dessous revient en grandissant légèrement.
+                    popEnterTransition = { fadeIn(tween(Motion.Page, easing = Motion.Ease)) + scaleIn(tween(Motion.Page, easing = Motion.Ease), initialScale = 0.96f) },
+                    popExitTransition = { fadeOut(tween(Motion.Page)) + scaleOut(tween(Motion.Page), targetScale = 0.9f) },
                 ) {
                     composable(Tab.Home.route) { HomeScreen(vm) }
                     composable(Tab.Search.route) { SearchScreen(vm) }
@@ -262,18 +266,16 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
         }
 
         CompositionLocalProvider(LocalNav provides nav) {
-            AnimatedVisibility(
+            // Le geste de retour ferme le lecteur depuis la pochette ; depuis les paroles ou la file, il y ramène.
+            PredictiveSheet(
                 playerOpen && current != null,
-                enter = slideInVertically(tween(Motion.Slow, easing = Motion.Ease)) { it } + fadeIn(tween(Motion.Fast)),
-                exit = slideOutVertically(tween(Motion.Page)) { it } + fadeOut(tween(Motion.Page)),
-            ) {
-                PlayerScreen(vm, playerPage, onPage = { playerPage = it }, onClose = { playerOpen = false })
+                backEnabled = playerPage == PlayerPage.Art && !togetherOpen && !scanning,
+                onBack = { playerOpen = false },
+            ) { gesturing ->
+                PlayerScreen(vm, playerPage, onPage = { playerPage = it }, onClose = { playerOpen = false }, gesturing = gesturing)
             }
-            AnimatedVisibility(
-                togetherOpen,
-                enter = slideInVertically(tween(Motion.Slow, easing = Motion.Ease)) { it } + fadeIn(tween(Motion.Fast)),
-                exit = slideOutVertically(tween(Motion.Page)) { it } + fadeOut(tween(Motion.Page)),
-            ) {
+            BackHandler(playerOpen && playerPage != PlayerPage.Art && !togetherOpen && !scanning) { playerPage = PlayerPage.Art }
+            PredictiveSheet(togetherOpen, backEnabled = !scanning, onBack = { togetherOpen = false }) {
                 TogetherScreen(
                     vm,
                     onShare = { kind -> withTransportPermissions(kind) { vm.share(kind) } },
@@ -297,14 +299,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
         }
     }
 
-    BackHandler(playerOpen || togetherOpen || scanning) {
-        when {
-            scanning -> scanning = false
-            togetherOpen -> togetherOpen = false
-            playerPage != PlayerPage.Art -> playerPage = PlayerPage.Art
-            else -> playerOpen = false
-        }
-    }
+    BackHandler(scanning) { scanning = false }
     LaunchedEffect(current == null) { if (current == null) playerOpen = false }
 }
 
