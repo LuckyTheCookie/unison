@@ -150,10 +150,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } else send(Cmd.PlayTracks(tracks, index))
     }
 
-    /** « Tout lire » : remplace la file, même à plusieurs (c'est une action explicite). */
+    /**
+     * « Tout lire » : remplace la file, même à plusieurs (c'est une action explicite).
+     * [shuffle] : bouton « Aléatoire » ; l'aléatoire s'active, l'ordre de la liste reste mémorisé.
+     */
     fun playAll(tracks: List<Track>, shuffle: Boolean = false) {
         if (tracks.isEmpty()) return
-        send(Cmd.PlayTracks(if (shuffle) tracks.shuffled() else tracks, 0))
+        send(Cmd.PlayTracks(tracks, 0, shuffle = shuffle))
+    }
+
+    fun toggleShuffle() {
+        val on = !snapshot.value.shuffle
+        send(Cmd.SetShuffle(on))
+        toast(if (on) "Aléatoire activé" else "Aléatoire désactivé")
     }
 
     fun playNext(track: Track) { send(Cmd.AddTrack(track, playNext = true)); toast("Sera lu ensuite") }

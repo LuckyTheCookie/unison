@@ -71,6 +71,13 @@ data class SessionSnapshot(
     val repeat: RepeatMode = RepeatMode.OFF,
     /** Radio automatique : la file se prolonge toute seule avec des titres proches. */
     val autoplay: Boolean = true,
+    /** Lecture aléatoire : la file à venir est mélangée, et le reste à chaque nouveau tour avec « répéter la file ». */
+    val shuffle: Boolean = false,
+    /**
+     * Ordre d'origine (uid) des titres, mémorisé à l'activation de l'aléatoire pour pouvoir y revenir.
+     * Vide quand l'aléatoire est coupé.
+     */
+    val queueOrder: List<String> = emptyList(),
     val version: Long = 0,
 ) {
     fun member(id: String): Member? = members.firstOrNull { it.id == id }
@@ -89,7 +96,7 @@ data class JoinInfo(
     val port: Int? = null,
 ) {
     fun toUri(): String = buildString {
-        append("unison://join?v=2&s=").append(sessionId)
+        append("unison://join?v=").append(PROTOCOL).append("&s=").append(sessionId)
         append("&k=").append(secret)
         append("&n=").append(java.net.URLEncoder.encode(hostName, "UTF-8"))
         append("&t=").append(if (transport == TransportKind.LAN) "lan" else "nearby")
@@ -98,8 +105,11 @@ data class JoinInfo(
     }
 
     companion object {
-        /** Version du protocole : une v1 (Deezer) et une v2 ne peuvent pas partager une session. */
-        const val PROTOCOL = 2
+        /**
+         * Version du protocole : deux versions différentes ne peuvent pas partager une session.
+         * 1 : v1 (Deezer) ; 2 : v2.0 à v2.1 ; 3 : v2.2 (aléatoire à deux états, partagé par la session).
+         */
+        const val PROTOCOL = 3
 
         sealed interface Parsed {
             data class Ok(val info: JoinInfo) : Parsed

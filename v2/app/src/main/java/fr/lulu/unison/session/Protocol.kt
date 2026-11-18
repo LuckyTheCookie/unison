@@ -16,9 +16,13 @@ sealed interface Cmd {
     @Serializable @SerialName("addMany")
     data class AddTracks(val tracks: List<Track>, val playNext: Boolean = false, val auto: Boolean = false) : Cmd
 
-    /** Remplace la file par [tracks] et lance celui d'indice [index] (« Tout lire », toucher un titre d'album). */
+    /**
+     * Remplace la file par [tracks] et lance celui d'indice [index] (« Tout lire », toucher un titre d'album).
+     * [shuffle] : bouton « Aléatoire » ; l'aléatoire s'active et la lecture part d'un titre au hasard.
+     * Sinon l'aléatoire garde son état : s'il est actif, le titre choisi joue d'abord et la suite est mélangée.
+     */
     @Serializable @SerialName("playAll")
-    data class PlayTracks(val tracks: List<Track>, val index: Int = 0) : Cmd
+    data class PlayTracks(val tracks: List<Track>, val index: Int = 0, val shuffle: Boolean = false) : Cmd
 
     @Serializable @SerialName("remove")
     data class Remove(val uid: String) : Cmd
@@ -44,9 +48,9 @@ sealed interface Cmd {
     @Serializable @SerialName("seek")
     data class Seek(val positionMs: Long) : Cmd
 
-    /** Mélange les titres à venir. */
+    /** Active (la file à venir est mélangée) ou coupe (elle reprend son ordre d'origine) l'aléatoire. */
     @Serializable @SerialName("shuffle")
-    data object Shuffle : Cmd
+    data class SetShuffle(val on: Boolean) : Cmd
 
     @Serializable @SerialName("clear")
     data object Clear : Cmd

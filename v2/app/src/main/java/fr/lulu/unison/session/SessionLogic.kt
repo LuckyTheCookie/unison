@@ -14,6 +14,8 @@ class SessionLogic(
     private val now: () -> Long = System::currentTimeMillis,
     private val newUid: () -> String = { java.util.UUID.randomUUID().toString().take(12) },
     private val shuffler: (List<QueueItem>) -> List<QueueItem> = { it.shuffled() },
+    /** Entier au hasard dans [0, n) : place d'un ajout en mode aléatoire, titre de départ du bouton « Aléatoire ». */
+    private val random: (Int) -> Int = { kotlin.random.Random.nextInt(it) },
 ) {
     fun apply(s: SessionSnapshot, cmd: Cmd, by: String): SessionSnapshot = when (cmd) {
         is Cmd.AddTrack -> add(s, listOf(cmd.track), cmd.playNext, by)
@@ -22,11 +24,15 @@ class SessionLogic(
 
         is Cmd.PlayTracks -> {
             val items = cmd.tracks.take(MAX_BATCH).map { QueueItem(newUid(), it, by) }
-            val i = cmd.index.coerceIn(0, (items.size - 1).coerceAtLeast(0))
+            val shuffle = cmd.shuffle || s.shuffle
+            val i = if (cmd.shuffle && items.isNotEmpty()) random(items.size) else cmd.index.coerceIn(0, (items.size - 1).coerceAtLeast(0))
             if (items.isEmpty()) s else s.copy(
                 history = pushHistory(s.history, s.anchor.item),
                 anchor = start(s, items[i]),
-                queue = items.drop(i + 1),
+                // En aléatoire, tous les autres titres de la liste suivent, mélangés ; l'ordre de la liste est gardé.
+                queue = if (shuffle) shuffler(items.filterIndexed { j, _ -> j != i }) else items.drop(i + 1),
+                shuffle = shuffle,
+                queueOrder = if (shuffle) items.map { it.uid } else emptyList(),
             ).bump()
         }
 
@@ -89,7 +95,16 @@ class SessionLogic(
             else s.copy(anchor = s.anchor.copy(positionMs = cmd.positionMs.coerceAtLeast(0), hostTimeMs = now())).bump()
         }
 
-        Cmd.Shuffle -> if (s.queue.size < 2) s else s.copy(queue = shuffler(s.queue)).bump()
+        is Cmd.SetShuffle -> when {
+            s.shuffle == cmd.on -> s
+            // L'ordre d'origine (titre en cours compris) est mémorisé avant de mélanger.
+            cmd.on -> s.copy(
+                shuffle = true,
+                queueOrder = listOfNotNull(s.anchor.item?.uid) + s.queue.map { it.uid },
+                queue = shuffler(s.queue),
+            ).bump()
+            else -> s.copy(shuffle = false, queue = originalOrder(s), queueOrder = emptyList()).bump()
+        }
 
         Cmd.Clear -> if (s.queue.isEmpty()) s else s.copy(queue = emptyList()).bump()
 
@@ -104,11 +119,49 @@ class SessionLogic(
             items.isEmpty() -> s
             // Rien ne joue : le premier titre démarre, les suivants forment la file.
             s.anchor.item == null -> {
-                val rest = items.drop(1)
-                s.copy(anchor = start(s, items.first()), queue = if (playNext) rest + s.queue else s.queue + rest).bump()
+                val first = items.first()
+                val started = s.copy(anchor = start(s, first), queueOrder = if (s.shuffle) s.queueOrder + first.uid else s.queueOrder)
+                insert(started, items.drop(1), playNext).bump()
             }
-            else -> s.copy(queue = if (playNext) items + s.queue else s.queue + items).bump()
+            else -> insert(s, items, playNext).bump()
         }
+    }
+
+    /**
+     * Range [items] dans la file : en tête pour « lire ensuite », sinon à la fin, ou à une place au hasard quand
+     * l'aléatoire est actif. Dans l'ordre d'origine, « lire ensuite » se place juste après le titre en cours
+     * (il reste en tête quand l'aléatoire se coupe) et un ajout se place à la fin.
+     */
+    private fun insert(s: SessionSnapshot, items: List<QueueItem>, playNext: Boolean): SessionSnapshot {
+        if (items.isEmpty()) return s
+        if (!s.shuffle) return s.copy(queue = if (playNext) items + s.queue else s.queue + items)
+        val uids = items.map { it.uid }
+        if (playNext) {
+            val at = s.queueOrder.indexOf(s.anchor.item?.uid) + 1
+            return s.copy(queue = items + s.queue, queueOrder = s.queueOrder.take(at) + uids + s.queueOrder.drop(at))
+        }
+        val queue = s.queue.toMutableList()
+        for (item in items) queue.add(random(queue.size + 1), item)
+        return s.copy(queue = queue, queueOrder = s.queueOrder + uids)
+    }
+
+    /**
+     * File remise dans l'ordre d'origine, en repartant du titre en cours : d'abord les titres qui le suivaient,
+     * puis ceux qui le précédaient ; les titres absents de cet ordre (ajoutés pendant le mélange) passent à la fin.
+     */
+    private fun originalOrder(s: SessionSnapshot): List<QueueItem> {
+        val rank = HashMap<String, Int>()
+        s.queueOrder.forEachIndexed { i, uid -> rank.putIfAbsent(uid, i) }
+        val n = s.queueOrder.size
+        val current = s.anchor.item?.uid?.let { rank[it] } ?: -1
+        return s.queue.withIndex().sortedBy { (pos, item) ->
+            val r = rank[item.uid]
+            when {
+                r == null -> 2 * n + pos
+                r > current -> r
+                else -> r + n
+            }
+        }.map { it.value }
     }
 
     /**
@@ -127,6 +180,12 @@ class SessionLogic(
         if (s.repeat == RepeatMode.ALL && current != null) {
             // Fin de file : on repart du début avec tout ce qui a été joué.
             val all = s.history + current
+            if (s.shuffle && all.size > 1) {
+                // En aléatoire, chaque tour est remélangé, sans rejouer tout de suite le titre qui vient de finir.
+                var mixed = shuffler(all)
+                if (mixed.first().uid == current.uid) mixed = mixed.drop(1) + mixed.first()
+                return s.copy(history = emptyList(), queue = mixed.drop(1), anchor = start(s, mixed.first())).bump()
+            }
             return s.copy(history = emptyList(), queue = all.drop(1), anchor = start(s, all.first())).bump()
         }
         return s.copy(history = pushHistory(s.history, current), anchor = PlayAnchor()).bump()
@@ -163,7 +222,24 @@ class SessionLogic(
     private fun pushHistory(h: List<QueueItem>, item: QueueItem?): List<QueueItem> =
         if (item == null) h else (h + item).takeLast(MAX_HISTORY)
 
-    private fun SessionSnapshot.bump() = copy(version = version + 1)
+    /**
+     * Nouvelle version de l'état. L'ordre d'origine ne garde que les titres encore présents (historique compris,
+     * pour « répéter la file ») : il reste borné.
+     */
+    private fun SessionSnapshot.bump(): SessionSnapshot {
+        val order = when {
+            !shuffle -> emptyList()
+            queueOrder.isEmpty() -> queueOrder
+            else -> {
+                val present = HashSet<String>(queue.size + history.size + 1)
+                queue.forEach { present += it.uid }
+                history.forEach { present += it.uid }
+                anchor.item?.let { present += it.uid }
+                queueOrder.filter { it in present }
+            }
+        }
+        return copy(version = version + 1, queueOrder = order)
+    }
 
     companion object {
         const val MAX_HISTORY = 50

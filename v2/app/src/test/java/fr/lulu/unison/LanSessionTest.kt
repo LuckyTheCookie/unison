@@ -10,6 +10,7 @@ import fr.lulu.unison.net.TransportException
 import fr.lulu.unison.session.ClientSession
 import fr.lulu.unison.session.Cmd
 import fr.lulu.unison.session.HostSession
+import fr.lulu.unison.session.Msg
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -92,6 +93,12 @@ class LanSessionTest {
         } catch (e: TransportException) {
             assertTrue(e.message!!.contains("invalide"))
         }
+        // Un téléphone resté en 2.1 (protocole 2) est refusé avec un message clair, sans entrer dans la session.
+        val old = LanClient().connect(info, "Ancien")
+        old.send(Msg.Hello("old", "Ancien", 0, info.secret, v = 2))
+        val reply = withTimeout(5_000) { old.incoming.receive() }
+        assertTrue(reply is Msg.Rejected && reply.reason.contains("à jour"))
+        old.close()
         assertEquals(1, host.snapshot.value.members.size)
         host.close()
     }

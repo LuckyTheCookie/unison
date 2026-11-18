@@ -18,6 +18,8 @@ object Gapless {
         return when {
             s.repeat == RepeatMode.ONE -> current
             s.queue.isNotEmpty() -> s.queue.first()
+            // Aléatoire et « répéter la file » : le nouveau tour sera remélangé, le suivant n'est pas connu d'avance.
+            s.repeat == RepeatMode.ALL && s.shuffle && s.history.isNotEmpty() -> null
             s.repeat == RepeatMode.ALL -> s.history.firstOrNull() ?: current
             else -> null
         }

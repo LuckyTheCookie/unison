@@ -53,7 +53,10 @@ class JoinInfoTest {
         // Un QR de la v1 (sans numéro de version) n'est pas compatible.
         assertEquals(JoinInfo.Companion.Parsed.Outdated, JoinInfo.inspect("unison://join?s=abc&k=def&n=H&t=lan&h=1.2.3.4&p=1"))
         assertEquals(JoinInfo.Companion.Parsed.Invalid, JoinInfo.inspect("https://example.com"))
-        assertEquals(JoinInfo.Companion.Parsed.Invalid, JoinInfo.inspect("unison://join?v=2&s=abc&k=def&t=lan"))
+        assertEquals(JoinInfo.Companion.Parsed.Invalid, JoinInfo.inspect("unison://join?v=3&s=abc&k=def&t=lan"))
+        // Un QR de la 2.0/2.1 (protocole 2, sans l'aléatoire partagé) est refusé proprement.
+        assertEquals(JoinInfo.Companion.Parsed.Outdated, JoinInfo.inspect("unison://join?v=2&s=abc&k=def&n=H&t=lan&h=1.2.3.4&p=1"))
+        assertTrue(JoinInfo("s", "k", "H", TransportKind.NEARBY).toUri().startsWith("unison://join?v=${JoinInfo.PROTOCOL}&"))
         assertNull(JoinInfo.parse("unison://join?s=abc&k=def&n=H&t=nearby"))
     }
 }
@@ -61,7 +64,7 @@ class JoinInfoTest {
 class SessionLogicTest {
     private var clock = 1_000_000L
     private var n = 0
-    private val logic = SessionLogic(now = { clock }, newUid = { "u${++n}" }, shuffler = { it.reversed() })
+    private val logic = SessionLogic(now = { clock }, newUid = { "u${++n}" }, shuffler = { it.reversed() }, random = { it / 2 })
     private fun t(id: String, ms: Long = 180_000) = Track(id, "Titre $id", "Artiste", durationMs = ms)
     private val solo = SessionSnapshot(members = listOf(Member("me", "Moi", 0, true)))
     private val shared = solo.copy(members = solo.members + Member("g", "Léa", 1))
@@ -128,9 +131,83 @@ class SessionLogicTest {
         assertEquals(listOf("d", "b", "c"), s.ids())
         s = s.run(Cmd.Remove(s.queue[1].uid))
         assertEquals(listOf("d", "c"), s.ids())
-        assertEquals(listOf("c", "d"), s.run(Cmd.Shuffle).ids())
         assertTrue(s.run(Cmd.Clear).queue.isEmpty())
         assertEquals("a", s.run(Cmd.Clear).anchor.item?.track?.id)
+    }
+
+    @Test fun shuffleOnThenOffRestoresTheOriginalOrder() {
+        var s = solo.run(Cmd.AddTracks(listOf(t("a"), t("b"), t("c"), t("d"), t("e"))), Cmd.SetShuffle(true))
+        assertTrue(s.shuffle)
+        assertEquals(listOf("e", "d", "c", "b"), s.ids())
+        assertEquals("a", s.anchor.item?.track?.id) // le titre en cours continue
+        s = s.run(Cmd.Skip)
+        assertEquals("e", s.anchor.item?.track?.id)
+        s = s.run(Cmd.SetShuffle(false))
+        assertFalse(s.shuffle)
+        assertTrue(s.queueOrder.isEmpty())
+        assertEquals(listOf("b", "c", "d"), s.ids())
+        // Sans effet si l'état ne change pas.
+        assertEquals(s, s.run(Cmd.SetShuffle(false)))
+    }
+
+    @Test fun shuffleOffResumesAfterTheCurrentTrack() {
+        var s = solo.run(Cmd.AddTracks(listOf(t("a"), t("b"), t("c"), t("d"), t("e"))), Cmd.SetShuffle(true))
+        s = s.run(Cmd.PlayNow(s.queue.first { it.track.id == "c" }.uid))
+        assertEquals("c", s.anchor.item?.track?.id)
+        // L'ordre d'origine reprend après le titre en cours (d, e), puis ce qui le précédait (b).
+        assertEquals(listOf("d", "e", "b"), s.run(Cmd.SetShuffle(false)).ids())
+    }
+
+    @Test fun additionsWhileShuffled() {
+        var s = solo.run(Cmd.AddTracks(listOf(t("a"), t("b"), t("c"), t("d"), t("e"))), Cmd.SetShuffle(true))
+        // « Ajouter à la file » : à une place au hasard ; « lire ensuite » : en tête.
+        s = s.run(Cmd.AddTrack(t("x")))
+        assertEquals(listOf("e", "d", "x", "c", "b"), s.ids())
+        s = s.run(Cmd.AddTrack(t("y"), playNext = true))
+        assertEquals(listOf("y", "e", "d", "x", "c", "b"), s.ids())
+        // À la désactivation : « lire ensuite » reste en tête, l'ajout passe à la fin.
+        assertEquals(listOf("y", "b", "c", "d", "e", "x"), s.run(Cmd.SetShuffle(false)).ids())
+    }
+
+    @Test fun shuffleButtonStartsAtRandomAndKeepsTheListOrder() {
+        val tracks = listOf(t("a"), t("b"), t("c"), t("d"), t("e"))
+        val s = solo.run(Cmd.PlayTracks(tracks, 0, shuffle = true))
+        assertTrue(s.shuffle)
+        assertEquals("c", s.anchor.item?.track?.id) // random(5) = 2
+        assertEquals(listOf("e", "d", "b", "a"), s.ids())
+        assertEquals(listOf("d", "e", "a", "b"), s.run(Cmd.SetShuffle(false)).ids())
+        // Aléatoire déjà actif : le titre touché joue d'abord, le reste de la liste suit, mélangé.
+        val touched = s.run(Cmd.PlayTracks(tracks, 1))
+        assertEquals("b", touched.anchor.item?.track?.id)
+        assertEquals(listOf("e", "d", "c", "a"), touched.ids())
+        // Aléatoire coupé : comportement habituel.
+        val plain = s.run(Cmd.SetShuffle(false), Cmd.PlayTracks(tracks, 1))
+        assertEquals(listOf("c", "d", "e"), plain.ids())
+    }
+
+    @Test fun repeatAllReshufflesEachRound() {
+        var s = solo.run(Cmd.AddTracks(listOf(t("a"), t("b"), t("c"))), Cmd.SetRepeat(RepeatMode.ALL), Cmd.SetShuffle(true))
+        assertEquals(listOf("c", "b"), s.ids())
+        s = s.run(Cmd.Skip, Cmd.Skip)
+        assertEquals("b", s.anchor.item?.track?.id)
+        assertTrue(s.queue.isEmpty())
+        // Le prochain tour n'est pas connu d'avance : rien n'est préparé sans coupure.
+        assertNull(Gapless.upcoming(s))
+        val looped = logic.ended(s, s.anchor.item!!.uid)
+        // Tour remélangé (ici inversé : b, c, a), sans rejouer tout de suite le titre qui vient de finir.
+        assertEquals("c", looped.anchor.item?.track?.id)
+        assertEquals(listOf("a", "b"), looped.ids())
+        assertTrue(looped.history.isEmpty())
+        assertTrue(looped.shuffle)
+        // L'ordre d'origine reste connu : couper l'aléatoire au tour suivant le retrouve.
+        assertEquals(listOf("a", "b"), looped.run(Cmd.SetShuffle(false)).ids())
+    }
+
+    @Test fun shuffleOrderStaysBounded() {
+        var s = solo.run(Cmd.AddTracks(listOf(t("a"), t("b"), t("c"))), Cmd.SetShuffle(true), Cmd.Clear)
+        assertEquals(listOf("a"), s.queueOrder.map { uid -> listOf("u1" to "a", "u2" to "b", "u3" to "c").toMap()[uid] })
+        s = s.run(Cmd.SetShuffle(false))
+        assertTrue(s.queueOrder.isEmpty())
     }
 
     @Test fun endOfTrackFollowsRepeatMode() {
@@ -209,8 +286,9 @@ class ProtocolTest {
             Msg.Command(Cmd.PlayTracks(listOf(track), 0)),
             Msg.Command(Cmd.AddTracks(listOf(track), auto = true)),
             Msg.Command(Cmd.SetRepeat(RepeatMode.ONE)),
-            Msg.Command(Cmd.Shuffle),
-            Msg.State(SessionSnapshot("s", "Hôte", TransportKind.LAN, repeat = RepeatMode.ALL, autoplay = false)),
+            Msg.Command(Cmd.SetShuffle(true)),
+            Msg.Command(Cmd.PlayTracks(listOf(track), 0, shuffle = true)),
+            Msg.State(SessionSnapshot("s", "Hôte", TransportKind.LAN, repeat = RepeatMode.ALL, autoplay = false, shuffle = true, queueOrder = listOf("u1", "u2"))),
             Msg.Ping(42), Msg.Pong(42, 43), Msg.Bye,
         )
         for (m in messages) assertEquals(m, decodeMsg(m.encode()))

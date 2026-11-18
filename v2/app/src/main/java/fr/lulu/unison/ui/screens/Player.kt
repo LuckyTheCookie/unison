@@ -395,7 +395,7 @@ private fun Transport(vm: AppViewModel, snap: SessionSnapshot) {
         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconBtn(R.drawable.ic_shuffle_line, "Mélanger la file", { vm.send(Cmd.Shuffle); vm.toast("File mélangée") }, tint = Ink.Secondary, enabled = snap.queue.size > 1)
+        ModeBtn(R.drawable.ic_shuffle_line, if (snap.shuffle) "Désactiver l'aléatoire" else "Activer l'aléatoire", snap.shuffle, vm::toggleShuffle)
         IconBtn(R.drawable.ic_prev_fill, "Précédent", { vm.send(Cmd.Previous) }, size = 56.dp, iconSize = 30.dp, enabled = has)
         Box(
             Modifier.size(72.dp).clip(CircleShape).background(Ink.ButtonBg).pressable(enabled = has || snap.queue.isNotEmpty(), scale = 0.92f, onClick = vm::togglePlay),
@@ -405,16 +405,21 @@ private fun Transport(vm: AppViewModel, snap: SessionSnapshot) {
             else Glyph(if (snap.anchor.playing) R.drawable.ic_pause_fill else R.drawable.ic_play_fill, tint = Ink.ButtonText, size = 32.dp)
         }
         IconBtn(R.drawable.ic_next_fill, "Suivant", { vm.send(Cmd.Skip) }, size = 56.dp, iconSize = 30.dp, enabled = has)
-        val (icon, tint) = when (snap.repeat) {
-            RepeatMode.OFF -> R.drawable.ic_repeat_line to Ink.Secondary
-            RepeatMode.ALL -> R.drawable.ic_repeat_line to Ink.Accent
-            RepeatMode.ONE -> R.drawable.ic_repeat_one_line to Ink.Accent
-        }
-        IconBtn(icon, "Répéter", {
+        val icon = if (snap.repeat == RepeatMode.ONE) R.drawable.ic_repeat_one_line else R.drawable.ic_repeat_line
+        ModeBtn(icon, "Répéter", snap.repeat != RepeatMode.OFF, {
             val next = RepeatMode.entries[(snap.repeat.ordinal + 1) % RepeatMode.entries.size]
             vm.send(Cmd.SetRepeat(next))
             vm.toast(when (next) { RepeatMode.OFF -> "Répétition désactivée"; RepeatMode.ALL -> "Répéter la file"; RepeatMode.ONE -> "Répéter ce titre" })
-        }, tint = tint)
+        })
+    }
+}
+
+/** Bouton de mode (aléatoire, répétition) : teinté et marqué d'une pastille quand il est actif. */
+@Composable
+private fun ModeBtn(icon: Int, label: String, on: Boolean, onClick: () -> Unit) {
+    Box(contentAlignment = Alignment.BottomCenter) {
+        IconBtn(icon, label, onClick, tint = if (on) Ink.Accent else Ink.Secondary)
+        if (on) Box(Modifier.padding(bottom = 2.dp).size(4.dp).clip(CircleShape).background(Ink.Accent))
     }
 }
 
