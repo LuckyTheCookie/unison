@@ -10,6 +10,13 @@ import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Format
+import androidx.media3.common.Timeline
+import androidx.media3.exoplayer.DecoderReuseEvaluation
+import fr.lulu.unison.source.DecodedFormat
+import fr.lulu.unison.source.QualityLabel
+import fr.lulu.unison.source.QualityTier
+import fr.lulu.unison.source.StreamInfo
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -98,6 +105,10 @@ class PlaybackController(
         val error: String? = null,
         /** Écart avec l'ancre de la session, quand on écoute à plusieurs. */
         val driftMs: Long? = null,
+        /** Libellé de qualité du titre en cours, d'après ce que le décodeur reçoit ; null : standard ou inconnu. */
+        val quality: QualityTier? = null,
+        /** Résumé technique du format décodé (« FLAC · 24 bits · 96 kHz »). */
+        val format: String? = null,
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -131,6 +142,10 @@ class PlaybackController(
     private var retries = 0
     private var failures = 0
     private val loudness = HashMap<String, Double?>()
+    /** Format réellement décodé de chaque titre de la liste d'ExoPlayer, par uid. */
+    private val decoded = HashMap<String, DecodedFormat>()
+    /** Ce que la source a annoncé du flux de chaque titre, par identifiant. */
+    private val declared = HashMap<String, StreamInfo>()
     /** Renfort des graves de ce téléphone, réglé à chaud depuis les réglages. */
     private val bass = BassBoostProcessor()
 
@@ -280,6 +295,23 @@ class PlaybackController(
         retries = 0
         _state.update { it.copy(loadedUid = item.uid, error = null) }
         applyVolume()
+        updateQuality()
+    }
+
+    /** Recalcule le libellé de qualité du titre en cours. */
+    private fun updateQuality() {
+        val item = loaded
+        val d = item?.let { decoded[it.uid] }
+        val s = item?.let { declared[it.track.id] }
+        val tier = QualityLabel.of(d, s)
+        val format = QualityLabel.summary(d, s)
+        if (_state.value.quality != tier || _state.value.format != format) _state.update { it.copy(quality = tier, format = format) }
+    }
+
+    private fun declare(id: String, stream: StreamInfo) {
+        declared[id] = stream
+        if (declared.size > 32) declared.keys.retainAll(setOfNotNull(loaded?.track?.id, id))
+        if (loaded?.track?.id == id) updateQuality()
     }
 
     private fun unload() {
@@ -289,6 +321,7 @@ class PlaybackController(
         lastAnchor = null
         finishedUid = null
         known.clear()
+        decoded.clear()
         published = null
         exo.stop()
         exo.clearMediaItems()
@@ -305,8 +338,10 @@ class PlaybackController(
         exo.repeatMode = Player.REPEAT_MODE_OFF
         exo.setMediaItems(listOf(mediaItem(item)), 0, startPosition(a))
         exo.prepare()
+        decoded.remove(item.uid)
         select(item)
         _state.value = State(loadedUid = item.uid, buffering = true)
+        updateQuality()
     }
 
     private fun mediaItem(item: QueueItem): MediaItem {
@@ -382,6 +417,7 @@ class PlaybackController(
                 }
                 .getOrNull() ?: return@launch
             loudness[id] = stream.loudnessDb
+            declare(id, stream)
             prefetchedUid = next.uid
             // La session a pu bouger pendant la résolution : on repart de son état actuel.
             if (loaded != null) prepareNext(Gapless.upcoming(sessions.snapshot.value))
@@ -510,7 +546,7 @@ class PlaybackController(
                 return@Factory spec.buildUpon().setKey(Downloads.cacheKey(id)).build()
             }
             val stream = runBlocking { streams.resolve(ref, settings.quality.toRequest()) }
-            main.post { loudness[id] = stream.loudnessDb; applyVolume() }
+            main.post { loudness[id] = stream.loudnessDb; applyVolume(); declare(id, stream) }
             spec.buildUpon()
                 .setUri(Uri.parse(stream.url))
                 .setKey(stream.cacheKey)
@@ -551,6 +587,16 @@ class PlaybackController(
      */
     private val diagnostics = object : AnalyticsListener {
         private var endedAt = 0L
+
+        override fun onAudioInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format, decoderReuseEvaluation: DecoderReuseEvaluation?) {
+            // Le format appartient au titre dont les échantillons sont lus, qui peut être le suivant (enchaînement).
+            if (eventTime.timeline.isEmpty || eventTime.windowIndex >= eventTime.timeline.windowCount) return
+            val uid = eventTime.timeline.getWindow(eventTime.windowIndex, Timeline.Window()).mediaItem.mediaId
+            decoded[uid] = decodedOf(format)
+            if (decoded.size > 8) decoded.keys.retainAll(known.keys + uid)
+            Log.d(TAG, "format décodé : ${QualityLabel.summary(decoded[uid], null) ?: format.sampleMimeType}")
+            if (uid == loaded?.uid) updateQuality()
+        }
 
         override fun onAudioUnderrun(eventTime: AnalyticsListener.EventTime, bufferSize: Int, bufferSizeMs: Long, elapsedSinceLastFeedMs: Long) {
             Log.w(TAG, "sous-alimentation audio (tampon ${bufferSizeMs} ms, ${elapsedSinceLastFeedMs} ms sans données)")
@@ -710,6 +756,24 @@ class PlaybackController(
         const val OFFLINE_NOTHING = "Hors ligne : aucun titre téléchargé à suivre"
         val EXPIRED_CODES = setOf(403, 410)
     }
+}
+
+/** Ce que le décodeur reçoit, d'après le format d'ExoPlayer (profondeur tirée de l'encodage PCM s'il est connu). */
+internal fun decodedOf(format: Format): DecodedFormat {
+    val depth = when (format.pcmEncoding) {
+        C.ENCODING_PCM_8BIT -> 8
+        C.ENCODING_PCM_16BIT, C.ENCODING_PCM_16BIT_BIG_ENDIAN -> 16
+        C.ENCODING_PCM_24BIT, C.ENCODING_PCM_24BIT_BIG_ENDIAN -> 24
+        C.ENCODING_PCM_32BIT, C.ENCODING_PCM_32BIT_BIG_ENDIAN, C.ENCODING_PCM_FLOAT -> 32
+        else -> null
+    }
+    val bps = listOf(format.averageBitrate, format.bitrate, format.peakBitrate).firstOrNull { it != Format.NO_VALUE && it > 0 }
+    return DecodedFormat(
+        mimeType = format.sampleMimeType,
+        sampleRateHz = format.sampleRate.takeIf { it != Format.NO_VALUE && it > 0 },
+        bitDepth = depth,
+        bitrateKbps = bps?.let { (it + 500) / 1000 },
+    )
 }
 
 /** Rendu audio habituel d'ExoPlayer, avec [processor] (renfort des graves) en tête de la chaîne de traitement. */

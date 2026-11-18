@@ -82,6 +82,13 @@ import fr.lulu.unison.model.QueueItem
 import fr.lulu.unison.model.RepeatMode
 import fr.lulu.unison.model.SessionSnapshot
 import fr.lulu.unison.session.Cmd
+import fr.lulu.unison.source.QualityTier
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.LocalNav
 import fr.lulu.unison.ui.LyricsUi
@@ -349,6 +356,7 @@ private fun NeighbourCover(url: String?, side: Dp, x: () -> Float, step: Float) 
 /** Barre de progression : on peut la toucher ou la faire glisser pour se déplacer dans le titre. */
 @Composable
 fun SeekBar(vm: AppViewModel, modifier: Modifier = Modifier) {
+    val player by vm.player.collectAsState()
     val position = rememberPosition(vm, 200)
     val duration = vm.durationMs()
     var dragging by remember { mutableStateOf(false) }
@@ -380,9 +388,49 @@ fun SeekBar(vm: AppViewModel, modifier: Modifier = Modifier) {
                 drawRoundRect(Color.White, size = Size(size.width * fraction, size.height), cornerRadius = r)
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(formatTime(if (dragging) (dragFraction * duration).toLong() else position.coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)), style = Type.Time, color = Ink.Secondary)
-            Text(if (duration > 0) formatTime(duration) else "–:––", style = Type.Time, color = Ink.Secondary)
+        Box(Modifier.fillMaxWidth()) {
+            Text(formatTime(if (dragging) (dragFraction * duration).toLong() else position.coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)), style = Type.Time, color = Ink.Secondary, modifier = Modifier.align(Alignment.CenterStart))
+            QualityBadge(player.quality, player.format, Modifier.align(Alignment.Center))
+            Text(if (duration > 0) formatTime(duration) else "–:––", style = Type.Time, color = Ink.Secondary, modifier = Modifier.align(Alignment.CenterEnd))
+        }
+    }
+}
+
+/**
+ * Libellé de qualité entre les deux horodatages : « Sans perte », « Haute résolution », « Dolby Atmos » ou
+ * « Haute qualité », d'après ce que le décodeur reçoit. Rien pour une qualité standard ou inconnue.
+ * Un reflet balaie les libellés sans perte (dessiné à chaque image sans recomposer).
+ */
+@Composable
+private fun QualityBadge(tier: QualityTier?, format: String?, modifier: Modifier = Modifier) {
+    AnimatedContent(
+        tier, modifier = modifier,
+        transitionSpec = { fadeIn(tween(Motion.Slow, easing = Motion.Ease)) togetherWith fadeOut(tween(Motion.Fast)) },
+        label = "qualité",
+    ) { t ->
+        if (t == null) { Spacer(Modifier.height(16.dp)); return@AnimatedContent }
+        val sweep = t != QualityTier.HIGH
+        val shimmer = rememberInfiniteTransition(label = "reflet")
+        val phase = shimmer.animateFloat(0f, 1f, infiniteRepeatable(tween(3_000, easing = LinearEasing)), label = "phase")
+        Row(
+            Modifier
+                .semantics { contentDescription = listOfNotNull(t.label, format).joinToString(", ") }
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen; alpha = if (sweep) 0.7f else 0.5f }
+                .drawWithContent {
+                    drawContent()
+                    if (!sweep) return@drawWithContent
+                    val band = size.width * 0.6f
+                    val x = -band + (size.width + 2 * band) * phase.value
+                    drawRect(
+                        Brush.horizontalGradient(listOf(Color.Transparent, Color.White, Color.Transparent), startX = x, endX = x + band),
+                        blendMode = BlendMode.SrcAtop,
+                    )
+                },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Glyph(if (sweep) R.drawable.ic_sparkles_fill else R.drawable.ic_headphone_line, tint = Ink.Primary, size = 12.dp)
+            Spacer(Modifier.width(4.dp))
+            Text(t.label, style = Type.Time.copy(fontWeight = androidx.compose.ui.text.font.FontWeight(600)), color = Ink.Primary)
         }
     }
 }

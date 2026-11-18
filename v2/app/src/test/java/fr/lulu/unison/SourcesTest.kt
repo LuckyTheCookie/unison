@@ -218,3 +218,46 @@ class SourceResolverTest {
         assertTrue(runCatching { resolver().resolve(TrackRef.of(unknown)) }.exceptionOrNull() is fr.lulu.unison.source.StreamUnavailableException)
     }
 }
+
+class QualityLabelTest {
+    private fun d(mime: String?, rate: Int? = null, depth: Int? = null, kbps: Int? = null) = fr.lulu.unison.source.DecodedFormat(mime, rate, depth, kbps)
+    private fun declared(codec: String?, rate: Int? = null, depth: Int? = null, kbps: Int? = null) =
+        StreamInfo(url = "https://cdn.example.test/x", expiresAtMs = 0, codec = codec, sampleRateHz = rate, bitDepth = depth, bitrateKbps = kbps, sourceId = "s1", cacheKey = "k")
+    private fun tier(decoded: fr.lulu.unison.source.DecodedFormat?, s: StreamInfo? = null) = fr.lulu.unison.source.QualityLabel.of(decoded, s)
+
+    @Test fun losslessAndHiRes() {
+        assertEquals(fr.lulu.unison.source.QualityTier.LOSSLESS, tier(d("audio/flac", 44_100, 16)))
+        assertEquals(fr.lulu.unison.source.QualityTier.LOSSLESS, tier(d("audio/flac", 48_000, 16)))
+        assertEquals(fr.lulu.unison.source.QualityTier.HI_RES, tier(d("audio/flac", 96_000, 24)))
+        assertEquals(fr.lulu.unison.source.QualityTier.HI_RES, tier(d("audio/flac", 44_100, 24)))
+        assertEquals(fr.lulu.unison.source.QualityTier.HI_RES, tier(d("audio/alac", 88_200)))
+        assertEquals(fr.lulu.unison.source.QualityTier.LOSSLESS, tier(d("audio/raw", 44_100, 16)))
+        // Profondeur absente du format décodé : celle annoncée par la source, puisque c'est bien du FLAC.
+        assertEquals(fr.lulu.unison.source.QualityTier.HI_RES, tier(d("audio/flac", 44_100), declared("flac", depth = 24)))
+        assertEquals("FLAC · 24 bits · 96 kHz", fr.lulu.unison.source.QualityLabel.summary(d("audio/flac", 96_000, 24)))
+        assertEquals("FLAC · 16 bits · 44,1 kHz", fr.lulu.unison.source.QualityLabel.summary(d("audio/flac", 44_100, 16)))
+    }
+
+    @Test fun lossyNeedsAtLeast256Kbps() {
+        assertEquals(fr.lulu.unison.source.QualityTier.HIGH, tier(d("audio/mpeg", 44_100, kbps = 320)))
+        assertEquals(fr.lulu.unison.source.QualityTier.HIGH, tier(d("audio/mp4a-latm", kbps = 256)))
+        assertNull(tier(d("audio/mp4a-latm", kbps = 128)))
+        // YouTube Music : Opus à 160 kbps, qualité standard, aucun libellé.
+        assertNull(tier(d("audio/opus", 48_000), declared("opus", kbps = 160)))
+        assertEquals(fr.lulu.unison.source.QualityTier.HIGH, tier(d("audio/mpeg"), declared("mp3", kbps = 320)))
+        assertEquals("MP3 · 44,1 kHz · 320 kbps", fr.lulu.unison.source.QualityLabel.summary(d("audio/mpeg", 44_100), declared("mp3", kbps = 320)))
+    }
+
+    @Test fun whatTheSourceClaimsIsNotEnough() {
+        // Annoncé sans perte mais décodé en Opus (repli, erreur) : pas de libellé.
+        assertNull(tier(d("audio/opus", 48_000), declared("flac", 96_000, 24)))
+        // Annoncé à 320 kbps en MP3 mais décodé en AAC : le débit annoncé ne s'applique pas.
+        assertNull(tier(d("audio/mp4a-latm"), declared("mp3", kbps = 320)))
+        // Rien de décodé : rien d'affiché.
+        assertNull(tier(null, declared("flac", 96_000, 24)))
+        assertNull(tier(d(null)))
+        assertNull(tier(d("audio/unknown")))
+        assertEquals(fr.lulu.unison.source.QualityTier.ATMOS, tier(d("audio/eac3-joc")))
+        assertNull(tier(d("audio/eac3", kbps = 192)))
+    }
+}
