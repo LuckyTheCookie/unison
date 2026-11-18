@@ -276,10 +276,15 @@ class Importer(
         }
     }
 
-    /** Résultats de recherche proposés pour une correspondance manuelle. */
-    suspend fun candidates(entry: ImportEntry.Song): List<Track> = runCatching {
-        matcherSearch(entry.query).ifEmpty { matcherSearch(entry.title) }
-    }.getOrDefault(emptyList())
+    /**
+     * Résultats de recherche proposés pour une correspondance manuelle : ceux de [query] quand on a tapé
+     * sa propre recherche, sinon ceux du titre et de l'artiste du fichier. Null si la recherche a échoué.
+     */
+    suspend fun candidates(entry: ImportEntry.Song, query: String? = null): List<Track>? = runCatching {
+        val typed = query?.trim()?.takeIf { it.isNotEmpty() }
+        if (typed != null) matcherSearch(typed)
+        else matcherSearch(entry.query).ifEmpty { matcherSearch(entry.title) }
+    }.onFailure { if (it is CancellationException) throw it }.getOrNull()
 
     private suspend fun matcherSearch(q: String) =
         catalog.search(q, SearchFilter.SONGS).filterIsInstance<SongItem>().map { it.track }.take(12)

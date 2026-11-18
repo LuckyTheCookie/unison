@@ -15,15 +15,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -32,6 +37,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import fr.lulu.unison.R
@@ -43,10 +50,12 @@ import fr.lulu.unison.model.Track
 import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.LocalBottomInset
 import fr.lulu.unison.ui.LocalNav
+import fr.lulu.unison.ui.Load
 import fr.lulu.unison.ui.components.CenterBox
 import fr.lulu.unison.ui.components.GlassButton
 import fr.lulu.unison.ui.components.GlassPanel
 import fr.lulu.unison.ui.components.Glyph
+import fr.lulu.unison.ui.components.IconBtn
 import fr.lulu.unison.ui.components.Notice
 import fr.lulu.unison.ui.components.PrimaryButton
 import fr.lulu.unison.ui.components.Spinner
@@ -54,6 +63,7 @@ import fr.lulu.unison.ui.components.TopBar
 import fr.lulu.unison.ui.components.TrackRow
 import fr.lulu.unison.ui.components.pressable
 import fr.lulu.unison.ui.theme.Ink
+import fr.lulu.unison.ui.theme.Radius
 import fr.lulu.unison.ui.theme.Type
 
 /** Types de fichiers proposés par le sélecteur : les exports CSV portent des types variés selon l'appareil. */
@@ -211,18 +221,48 @@ private fun Report(name: String, r: ImportReport, onManual: (ImportEntry.Song) -
 /** Recherche manuelle d'un titre que l'import n'a pas retrouvé. */
 @Composable
 private fun ManualMatch(entry: ImportEntry.Song, vm: AppViewModel, onDismiss: () -> Unit) {
-    val results by produceState<List<Track>?>(null, entry) { value = vm.importCandidates(entry) }
+    // Recherche proposée : titre et artiste du fichier ; on peut la réécrire si elle ne donne rien de bon.
+    var input by remember(entry) { mutableStateOf(entry.query) }
+    var submitted by remember(entry) { mutableStateOf<String?>(null) }
+    var attempt by remember(entry) { mutableIntStateOf(0) }
+    val results by produceState<Load<List<Track>>>(Load.Loading, entry, submitted, attempt) {
+        value = Load.Loading
+        value = vm.importCandidates(entry, submitted)?.let { Load.Ready(it) } ?: Load.Failed("Recherche impossible, vérifie ta connexion.")
+    }
+    val submit = { if (input.isNotBlank()) { submitted = input.trim(); attempt++ } }
     Sheet(onDismiss, expand = true) {
         Text(entry.title, style = Type.Heading, color = Ink.Primary, modifier = Modifier.padding(horizontal = 22.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(
             "Choisis la bonne version pour « ${(entry.target as? ImportTarget.Playlist)?.name ?: "Favoris"} »",
             style = Type.Body, color = Ink.Secondary, modifier = Modifier.padding(horizontal = 22.dp, vertical = 4.dp),
         )
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().height(50.dp).clip(Radius.Item).background(Ink.FillHover).padding(start = 14.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Glyph(R.drawable.ic_search_line, tint = Ink.Secondary, size = 20.dp)
+            Spacer(Modifier.width(10.dp))
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                if (input.isEmpty()) Text("Titre, artiste…", style = Type.Row, color = Ink.Tertiary)
+                BasicTextField(
+                    value = input,
+                    onValueChange = { input = it.take(120) },
+                    singleLine = true,
+                    textStyle = Type.Row.copy(color = Ink.Primary),
+                    cursorBrush = SolidColor(Ink.Accent),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { submit() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (input.isNotEmpty()) IconBtn(R.drawable.ic_close_line, "Effacer", { input = "" }, size = 42.dp, iconSize = 18.dp, tint = Ink.Secondary)
+        }
         Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
-            when (val list = results) {
-                null -> CenterBox { Spinner() }
-                else -> if (list.isEmpty()) Notice("Aucun résultat", icon = R.drawable.ic_search_line)
-                else list.forEach { t -> TrackRow(t, onClick = { vm.resolveImport(entry, t); onDismiss() }) }
+            when (val r = results) {
+                Load.Loading -> CenterBox { Spinner() }
+                is Load.Failed -> Notice("Recherche impossible", detail = r.message, icon = R.drawable.ic_wifi_line, action = "Réessayer", onAction = { attempt++ })
+                is Load.Ready -> if (r.value.isEmpty()) Notice("Aucun résultat", detail = "Essaie avec d'autres mots.", icon = R.drawable.ic_search_line)
+                else r.value.forEach { t -> TrackRow(t, onClick = { vm.resolveImport(entry, t); onDismiss() }) }
             }
         }
     }

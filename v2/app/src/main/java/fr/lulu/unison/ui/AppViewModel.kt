@@ -245,7 +245,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun startImport() = importer.start()
     fun cancelImport() = importer.cancel()
     fun dismissImport() = importer.dismiss()
-    suspend fun importCandidates(entry: ImportEntry.Song): List<Track> = importer.candidates(entry)
+    suspend fun importCandidates(entry: ImportEntry.Song, query: String? = null): List<Track>? = importer.candidates(entry, query)
     fun resolveImport(entry: ImportEntry.Song, track: Track) { importer.resolveManually(entry, track); toast("Ajouté") }
 
     fun toggleSaved(browseId: String, page: CollectionPage) = viewModelScope.launch {
