@@ -38,6 +38,7 @@ import fr.lulu.unison.data.Settings
 import fr.lulu.unison.model.PlayAnchor
 import fr.lulu.unison.offline.Connectivity
 import fr.lulu.unison.offline.Downloads
+import fr.lulu.unison.offline.OfflineSkipper
 import fr.lulu.unison.model.QueueItem
 import fr.lulu.unison.model.SessionSnapshot
 import fr.lulu.unison.session.Cmd
@@ -56,6 +57,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -141,6 +143,11 @@ class PlaybackController(
         scope.launch {
             combine(sessions.snapshot, sessions.listenHere) { s, here -> s to here }.collect { (s, here) -> reconcile(s, here) }
         }
+        // Réseau perdu ou retrouvé : le titre préparé à l'avance doit rester jouable (téléchargé, hors ligne).
+        // Le titre en cours, lui, continue sur ce qui est déjà en mémoire.
+        scope.launch {
+            connectivity.online.drop(1).collect { if (loaded != null) prepareNext(Gapless.upcoming(sessions.snapshot.value)) }
+        }
         scope.launch {
             while (isActive) {
                 delay(TICK_MS)
@@ -196,23 +203,19 @@ class PlaybackController(
      * Après un tour complet sans titre jouable, la lecture se met en pause.
      */
     private fun skipIfOffline(s: SessionSnapshot, item: QueueItem): Boolean {
-        if (connectivity.online.value || downloads.isComplete(item.track.id) || !sessions.isHost) {
-            offlineSkips = 0; offlineSkipped = null
-            return false
-        }
-        if (item.uid == offlineSkipped) return true
-        offlineSkipped = item.uid
+        val decision = offlineSkipper.decide(item.uid, playableHere(item), sessions.isHost, s.queue.size + s.history.size + 1)
+        if (decision == OfflineSkipper.Decision.PLAY) return false
+        if (decision == OfflineSkipper.Decision.WAIT) return true
         if (exo.playWhenReady) exo.pause()
-        _state.update { it.copy(error = "Hors ligne : titre non téléchargé", buffering = false) }
-        if (++offlineSkips > s.queue.size + s.history.size + 1) {
-            offlineSkips = 0
-            sessions.send(Cmd.Pause)
-        } else sessions.local.trackFailed(item.uid)
+        _state.update { it.copy(error = OFFLINE_MISSING, buffering = false) }
+        if (decision == OfflineSkipper.Decision.PAUSE) sessions.send(Cmd.Pause) else sessions.local.trackFailed(item.uid)
         return true
     }
 
-    private var offlineSkipped: String? = null
-    private var offlineSkips = 0
+    /** Le titre peut se lire maintenant : réseau présent ou titre entièrement téléchargé. */
+    private fun playableHere(item: QueueItem) = connectivity.online.value || downloads.isComplete(item.track.id)
+
+    private val offlineSkipper = OfflineSkipper()
 
     /** Amène le lecteur sur [item] : rien à faire, passage au titre déjà préparé, ou chargement complet. */
     private fun place(item: QueueItem, a: PlayAnchor): Boolean {
@@ -301,7 +304,7 @@ class PlaybackController(
         val index = exo.currentMediaItemIndex
         if (index > 0) exo.removeMediaItems(0, index) // titre précédent, déjà enchaîné
         val repeatOne = next?.uid == current.uid
-        val playable = next != null && (connectivity.online.value || downloads.isComplete(next.track.id))
+        val playable = next != null && playableHere(next)
         val wanted = next?.takeIf { !repeatOne && playable && it.track.id !in unplayable }
         val mode = if (repeatOne) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
         if (exo.repeatMode != mode) exo.repeatMode = mode
@@ -602,6 +605,12 @@ class PlaybackController(
             val expired = causes.any { it is HttpDataSource.InvalidResponseCodeException && it.responseCode in EXPIRED_CODES }
             val unavailable = causes.any { it is StreamUnavailableException }
             Log.w(TAG, "lecture impossible (${error.errorCodeName})")
+            if (!playableHere(item)) {
+                // Réseau perdu sur un titre non téléchargé : inutile de réessayer, la file passe aux titres téléchargés.
+                _state.update { it.copy(error = OFFLINE_MISSING, buffering = false) }
+                if (sessions.isHost) sessions.local.trackFailed(item.uid)
+                return
+            }
             if (!unavailable && retries < MAX_RETRIES) {
                 retries++
                 if (expired) streams.invalidate(item.track.id)
@@ -664,6 +673,7 @@ class PlaybackController(
         /** Durée du titre suivant qu'ExoPlayer garde prête pendant le titre en cours. */
         const val PRELOAD_US = 20_000_000L
         const val PREFETCH_RETRY_MS = 15_000L
+        const val OFFLINE_MISSING = "Hors ligne : titre non téléchargé"
         val EXPIRED_CODES = setOf(403, 410)
     }
 }
