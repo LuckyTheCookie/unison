@@ -170,7 +170,7 @@ fun PlaylistPicker(tracks: List<Track>, vm: AppViewModel, onDismiss: () -> Unit)
 }
 
 @Composable
-private fun DialogCard(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+internal fun DialogCard(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
         Column(
             Modifier.fillMaxWidth().clip(Radius.Panel).background(Ink.Panel).border(0.5.dp, Ink.Hairline, Radius.Panel).padding(22.dp),

@@ -13,6 +13,7 @@ import fr.lulu.unison.lyrics.LyricsRepository
 import fr.lulu.unison.playback.AutoQueue
 import fr.lulu.unison.playback.PlaybackController
 import fr.lulu.unison.session.SessionManager
+import fr.lulu.unison.source.SourceRepository
 import fr.lulu.unison.source.SourceResolver
 import fr.lulu.unison.source.YouTubeSource
 import fr.lulu.unison.update.UpdateManager
@@ -50,6 +51,8 @@ class AppGraph(app: Application) {
         quality = { settings.value.quality },
     )
     val catalog: MusicCatalog = YouTubeCatalog(youtube)
+    /** Sources importées par l'utilisateur (aucune par défaut). */
+    val sources = SourceRepository(File(app.filesDir, "sources.json"))
     /** Résolution des flux : YouTube Music, ou la source importée choisie dans les réglages. */
     val resolver = SourceResolver(YouTubeSource(youtube, catalog))
     val library = Library(app)

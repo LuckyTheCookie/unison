@@ -20,6 +20,8 @@ import fr.lulu.unison.model.JoinInfo
 import fr.lulu.unison.model.Track
 import fr.lulu.unison.model.TransportKind
 import fr.lulu.unison.session.Cmd
+import fr.lulu.unison.source.SourceConfig
+import fr.lulu.unison.source.SourceIds
 import fr.lulu.unison.youtube.ArtistPage
 import fr.lulu.unison.youtube.CollectionPage
 import fr.lulu.unison.youtube.Quality
@@ -386,6 +388,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setAnimatedBackground(on: Boolean) = viewModelScope.launch { graph.prefs.setAnimatedBackground(on) }
     fun setBassBoost(on: Boolean) = viewModelScope.launch { graph.prefs.setBassBoost(on) }
     fun setBassLevel(level: Int) = viewModelScope.launch { graph.prefs.setBassLevel(level) }
+
+    // --- Sources audio ---
+
+    /** Sources importées (aucune par défaut). */
+    val sources: StateFlow<List<SourceConfig>> = graph.sources.sources
+
+    /** Choisit d'où vient le son : [SourceIds.YOUTUBE] ou une source importée. */
+    fun setActiveSource(id: String) = viewModelScope.launch {
+        if (id != SourceIds.YOUTUBE && graph.sources.get(id) == null) return@launch
+        graph.prefs.setActiveSource(id)
+    }
+
+    /** Retire la source ; si c'était celle choisie, YouTube Music reprend la main. */
+    fun removeSource(id: String) = viewModelScope.launch {
+        val name = graph.sources.get(id)?.name ?: return@launch
+        if (settings.value.activeSource == id) graph.prefs.setActiveSource(SourceIds.YOUTUBE)
+        graph.sources.remove(id)
+        toast("Source « $name » retirée")
+    }
 
     // En dernier : tous les champs ci-dessus doivent exister avant le premier chargement.
     init {

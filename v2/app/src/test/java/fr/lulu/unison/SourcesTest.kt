@@ -54,3 +54,36 @@ class YouTubeSourceTest {
         assertEquals("***", StreamInfo.redact("pas une adresse"))
     }
 }
+
+class SourceRepositoryTest {
+    @get:org.junit.Rule val tmp = org.junit.rules.TemporaryFolder()
+
+    private fun config(url: String, name: String = "Ma source") =
+        fr.lulu.unison.source.SourceConfig(fr.lulu.unison.source.SourceConfig.idFor(url), "org.exemple.source", name, "1.0", url)
+
+    @Test fun keepsSourcesAcrossRestarts() {
+        val file = java.io.File(tmp.root, "sources.json")
+        val repo = fr.lulu.unison.source.SourceRepository(file)
+        assertEquals(emptyList<Any>(), repo.sources.value)
+        val a = config("https://a.example.test")
+        repo.put(a)
+        repo.put(config("https://b.example.test", "B"))
+        repo.update(a.id) { it.copy(pickedQuality = "lossless") }
+        val again = fr.lulu.unison.source.SourceRepository(file)
+        assertEquals(2, again.sources.value.size)
+        assertEquals("lossless", again.get(a.id)?.pickedQuality)
+        again.remove(a.id)
+        assertNull(fr.lulu.unison.source.SourceRepository(file).get(a.id))
+    }
+
+    @Test fun sameAddressSameIdOnEveryPhone() {
+        assertEquals(config("https://a.example.test").id, config("https://A.example.test").id)
+        assertFalse(config("https://a.example.test").id == config("https://b.example.test").id)
+        assertEquals(11, config("https://a.example.test").id.length)
+    }
+
+    @Test fun brokenFileStartsEmpty() {
+        val file = java.io.File(tmp.root, "sources.json").apply { writeText("{pas du json") }
+        assertEquals(0, fr.lulu.unison.source.SourceRepository(file).sources.value.size)
+    }
+}

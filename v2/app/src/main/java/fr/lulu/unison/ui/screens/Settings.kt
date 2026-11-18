@@ -97,6 +97,9 @@ fun SettingsScreen(vm: AppViewModel) {
                 }
             }
 
+            Label("Source audio")
+            SourcesPanel(vm)
+
             Label("Lecture")
             GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
                 Text("Qualité audio", style = Type.Row, color = Ink.Primary)
