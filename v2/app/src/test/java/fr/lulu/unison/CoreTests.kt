@@ -169,6 +169,32 @@ class SessionLogicTest {
         assertEquals(listOf("y", "b", "c", "d", "e", "x"), s.run(Cmd.SetShuffle(false)).ids())
     }
 
+    @Test fun longPlaylistIsPlayedInFull() {
+        // Playlist importée de 313 titres : aucun ne doit être perdu, et le titre touché au-delà du 200e doit être le bon.
+        val tracks = (1..313).map { t("p$it") }
+        val full = solo.run(Cmd.PlayTracks(tracks, 0))
+        assertEquals("p1", full.anchor.item?.track?.id)
+        assertEquals((2..313).map { "p$it" }, full.ids())
+        val late = solo.run(Cmd.PlayTracks(tracks, 250))
+        assertEquals("p251", late.anchor.item?.track?.id)
+        assertEquals((252..313).map { "p$it" }, late.ids())
+        val shuffled = solo.run(Cmd.PlayTracks(tracks, 0, shuffle = true))
+        assertEquals(313, shuffled.queue.size + 1)
+        assertEquals(313, shuffled.queueOrder.size)
+        val added = solo.run(Cmd.AddTracks(tracks))
+        assertEquals(313, added.queue.size + 1)
+    }
+
+    @Test fun hugeBatchIsBoundedAroundTheTouchedTrack() {
+        val tracks = (1..(SessionLogic.MAX_BATCH + 500)).map { t("p$it") }
+        val s = solo.run(Cmd.PlayTracks(tracks, tracks.size - 1))
+        assertEquals("p${tracks.size}", s.anchor.item?.track?.id)
+        assertTrue(s.queue.isEmpty())
+        val start = solo.run(Cmd.PlayTracks(tracks, 0))
+        assertEquals("p1", start.anchor.item?.track?.id)
+        assertEquals(SessionLogic.MAX_BATCH - 1, start.queue.size)
+    }
+
     @Test fun shuffleButtonStartsAtRandomAndKeepsTheListOrder() {
         val tracks = listOf(t("a"), t("b"), t("c"), t("d"), t("e"))
         val s = solo.run(Cmd.PlayTracks(tracks, 0, shuffle = true))
