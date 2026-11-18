@@ -23,9 +23,11 @@ class SessionLogic(
         is Cmd.AddTracks -> add(s, cmd.tracks.take(MAX_BATCH), cmd.playNext, if (cmd.auto) QueueItem.AUTO else by)
 
         is Cmd.PlayTracks -> {
-            val items = cmd.tracks.take(MAX_BATCH).map { QueueItem(newUid(), it, by) }
+            // Au-delà de MAX_BATCH, on garde une fenêtre qui contient le titre touché (et non le seul début de la liste).
+            val from = cmd.index.coerceAtMost(cmd.tracks.size - MAX_BATCH).coerceAtLeast(0)
+            val items = cmd.tracks.drop(from).take(MAX_BATCH).map { QueueItem(newUid(), it, by) }
             val shuffle = cmd.shuffle || s.shuffle
-            val i = if (cmd.shuffle && items.isNotEmpty()) random(items.size) else cmd.index.coerceIn(0, (items.size - 1).coerceAtLeast(0))
+            val i = if (cmd.shuffle && items.isNotEmpty()) random(items.size) else (cmd.index - from).coerceIn(0, (items.size - 1).coerceAtLeast(0))
             if (items.isEmpty()) s else s.copy(
                 history = pushHistory(s.history, s.anchor.item),
                 anchor = start(s, items[i]),
@@ -243,7 +245,11 @@ class SessionLogic(
 
     companion object {
         const val MAX_HISTORY = 50
-        const val MAX_BATCH = 200
+        /**
+         * Plafond d'une commande « lire / ajouter une liste ». Il protège la file et le snapshot (envoyé en entier aux invités),
+         * mais doit laisser passer une grosse playlist importée : 200 coupait silencieusement tout ce qui suivait le 200e titre.
+         */
+        const val MAX_BATCH = 1_000
         const val START_DELAY_MS = 1_500L
     }
 }
