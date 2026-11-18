@@ -104,6 +104,19 @@ fun SourcesPanel(vm: AppViewModel) {
         }
         Spacer(Modifier.height(10.dp))
         GlassButton("Ajouter une source", vm::startAddSource, Modifier.fillMaxWidth(), icon = R.drawable.ic_add_line)
+        if (sources.isNotEmpty()) {
+            Box(Modifier.padding(vertical = 14.dp).fillMaxWidth().height(0.5.dp).background(Ink.Hairline))
+            Row(Modifier.fillMaxWidth().pressable(scale = 0.99f) { vm.setFallbackToYouTube(!settings.fallbackToYouTube) }, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Repli sur YouTube Music", style = Type.Row, color = Ink.Primary)
+                    Text(
+                        "Un titre absent de la source choisie, ou une source qui ne répond pas, se lit sur YouTube Music. À plusieurs, tout le monde reste sur YouTube Music.",
+                        style = Type.Caption, color = Ink.Tertiary,
+                    )
+                }
+                Toggle(settings.fallbackToYouTube)
+            }
+        }
     }
 
     val adding by vm.addSource.collectAsState()

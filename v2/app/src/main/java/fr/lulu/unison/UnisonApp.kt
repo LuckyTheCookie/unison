@@ -13,6 +13,8 @@ import fr.lulu.unison.lyrics.LyricsRepository
 import fr.lulu.unison.playback.AutoQueue
 import fr.lulu.unison.playback.PlaybackController
 import fr.lulu.unison.session.SessionManager
+import fr.lulu.unison.source.ImportedSource
+import fr.lulu.unison.source.ResolverSettings
 import fr.lulu.unison.source.SourceHub
 import fr.lulu.unison.source.SourcePolicy
 import fr.lulu.unison.source.SourceRepository
@@ -61,7 +63,12 @@ class AppGraph(app: Application) {
     val sourceHub = SourceHub(sources, SourcePolicy(debugLocal = BuildConfig.DEBUG), http, streamGuard, "Unison/${BuildConfig.VERSION_NAME}")
     private val mediaHttp: OkHttpClient = http.newBuilder().addNetworkInterceptor(streamGuard.interceptor).build()
     /** Résolution des flux : YouTube Music, ou la source importée choisie dans les réglages. */
-    val resolver = SourceResolver(YouTubeSource(youtube, catalog))
+    val resolver = SourceResolver(
+        youtube = YouTubeSource(youtube, catalog),
+        imported = { id -> sourceHub.source(id)?.let { ImportedSource(it, it.config.allowDownloads) } },
+        settings = { settings.value.let { ResolverSettings(it.activeSource, it.fallbackToYouTube) } },
+        shared = { sessions.snapshot.value.shared },
+    )
     val library = Library(app)
     val lyrics = LyricsRepository(http, File(app.filesDir, "offline/lyrics"))
     val sessions = SessionManager(app, prefs)

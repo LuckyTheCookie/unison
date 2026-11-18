@@ -66,6 +66,7 @@ fun SearchScreen(vm: AppViewModel) {
     val nav = LocalNav.current
     val ui by vm.search.collectAsState()
     val snap by vm.snapshot.collectAsState()
+    val source by vm.activeSource.collectAsState()
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     fun submit(q: String? = null) { if (q != null) vm.submitSearch(q) else vm.submitSearch(); focus.clearFocus(); keyboard?.hide() }
@@ -96,7 +97,9 @@ fun SearchScreen(vm: AppViewModel) {
             if (ui.query.isNotEmpty()) IconBtn(R.drawable.ic_close_line, "Effacer", { vm.setQuery(""); runCatching { requester.requestFocus() } }, size = 42.dp, iconSize = 18.dp, tint = Ink.Secondary)
         }
         LazyRow(Modifier.padding(top = 12.dp, bottom = 6.dp), contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(SearchFilter.entries) { f -> Chip(f.label, selected = ui.filter == f, onClick = { vm.setFilter(f) }) }
+            items(SearchFilter.entries) { f -> Chip(f.label, selected = ui.filter == f && !ui.inSource, onClick = { vm.setFilter(f) }) }
+            // Source importée choisie : ses titres, cherchés directement chez elle.
+            source?.let { s -> item(key = "source") { Chip(s.name, selected = ui.inSource, onClick = vm::searchInSource) } }
         }
 
         val bottom = LocalBottomInset.current + 16.dp

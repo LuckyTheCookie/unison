@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import fr.lulu.unison.R
+import fr.lulu.unison.source.SourceTrackId
 import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.model.Track
 import fr.lulu.unison.ui.components.DownloadBadge
@@ -138,7 +139,8 @@ fun TrackMenu(
         SheetAction(R.drawable.ic_radio_line, "Lancer la radio de ce titre") { vm.startRadio(track); onDismiss() }
         SheetAction(R.drawable.ic_share_line, "Partager") {
             val send = Intent(Intent.ACTION_SEND).setType("text/plain")
-                .putExtra(Intent.EXTRA_TEXT, "${track.title} — ${track.artist}\nhttps://music.youtube.com/watch?v=${track.id}")
+                // Un titre d'une source importée n'a pas de lien public : on partage son nom seulement.
+                .putExtra(Intent.EXTRA_TEXT, if (SourceTrackId.isSource(track.id)) "${track.title} — ${track.artist}" else "${track.title} — ${track.artist}\nhttps://music.youtube.com/watch?v=${track.id}")
             context.startActivity(Intent.createChooser(send, "Partager le titre"))
             onDismiss()
         }

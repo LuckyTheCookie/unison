@@ -29,16 +29,21 @@ class YouTubeSource(private val engine: YouTubeEngine, private val catalog: Musi
             139 to 48, 140 to 128, 141 to 256, 599 to 30,
         )
 
+        private val OPUS_ITAGS = setOf(249, 250, 251, 600, 774)
+        private val AAC_ITAGS = setOf(139, 140, 141, 599)
+
         fun describe(s: ResolvedStream): StreamInfo {
             val mime = s.mimeType?.lowercase()
             val codec = when {
-                mime == null -> null
-                "opus" in mime -> "opus"
-                "mp4a" in mime || "aac" in mime -> "aac"
-                "vorbis" in mime -> "vorbis"
+                mime != null && "opus" in mime -> "opus"
+                mime != null && ("mp4a" in mime || "aac" in mime) -> "aac"
+                mime != null && "vorbis" in mime -> "vorbis"
+                s.itag in OPUS_ITAGS -> "opus"
+                s.itag in AAC_ITAGS -> "aac"
                 else -> null
             }
             val container = mime?.substringAfter('/', "")?.substringBefore(';')?.trim()?.ifBlank { null }
+                ?: when (codec) { "opus" -> "webm"; "aac" -> "mp4"; else -> null }
             return StreamInfo(
                 url = s.url,
                 headers = s.headers,

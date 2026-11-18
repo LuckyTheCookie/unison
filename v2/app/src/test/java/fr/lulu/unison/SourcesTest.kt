@@ -11,6 +11,7 @@ import fr.lulu.unison.youtube.ResolvedStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TrackUriTest {
@@ -85,5 +86,135 @@ class SourceRepositoryTest {
     @Test fun brokenFileStartsEmpty() {
         val file = java.io.File(tmp.root, "sources.json").apply { writeText("{pas du json") }
         assertEquals(0, fr.lulu.unison.source.SourceRepository(file).sources.value.size)
+    }
+}
+
+class TrackMatcherTest {
+    private fun c(title: String, artist: String = "Eurythmics", d: Long = 216_000) = fr.lulu.unison.source.TrackMatcher.Candidate(title, artist, d)
+    private fun same(a: fr.lulu.unison.source.TrackMatcher.Candidate, b: fr.lulu.unison.source.TrackMatcher.Candidate) =
+        fr.lulu.unison.source.TrackMatcher.score(a, b) != null
+
+    @Test fun sameRecordingDespiteContext() {
+        assertTrue(same(c("Sweet Dreams (Are Made of This)"), c("Sweet Dreams (Are Made of This) - Remastered")))
+        assertTrue(same(c("Sweet Dreams"), c("Sweet Dreams [2005 Remaster]", "Eurythmics, Annie Lennox, Dave Stewart")))
+        assertTrue(same(c("Été indien", "Joe Dassin"), c("Ete Indien", "Joe Dassin")))
+        assertTrue(same(c("Titre (feat. X)", "A"), c("Titre", "A & X")))
+        assertTrue(same(c("Song - Radio Edit", "A"), c("Song", "A")))
+    }
+
+    @Test fun otherVersionsAreRejected() {
+        assertFalse(same(c("Sweet Dreams"), c("Sweet Dreams (Remix)")))
+        assertFalse(same(c("Sweet Dreams (Live)"), c("Sweet Dreams")))
+        assertFalse(same(c("Sweet Dreams"), c("Sweet Dreams - Acoustic Version")))
+        assertFalse(same(c("Sweet Dreams"), c("Sweet Dreams (Slowed + Reverb)")))
+        assertTrue(same(c("Live Forever", "Oasis", 276_000), c("Live Forever (Remastered)", "Oasis", 277_000)))
+    }
+
+    @Test fun artistAndDurationMatter() {
+        assertFalse(same(c("Sweet Dreams", "Marilyn Manson"), c("Sweet Dreams", "Eurythmics")))
+        assertTrue(same(c("Sweet Dreams", ""), c("Sweet Dreams", "Eurythmics")))
+        // Écart de durée : un autre montage (163 s contre 189 s) n'est pas le même enregistrement.
+        assertFalse(same(c("Titre", "A", 163_000), c("Titre", "A", 189_000)))
+        assertTrue(same(c("Titre", "A", 200_000), c("Titre", "A", 203_000)))
+        assertTrue(same(c("Titre", "A", 0), c("Titre", "A", 203_000)))
+    }
+
+    @Test fun picksTheClosestCandidate() {
+        val target = c("Sweet Dreams (Are Made of This)")
+        val list = listOf(c("Sweet Dreams (Remix)"), c("Sweet Dreams", d = 219_000), c("Sweet Dreams (Are Made of This)", d = 216_500))
+        assertEquals(list[2], fr.lulu.unison.source.TrackMatcher.best(target, list) { it })
+        assertNull(fr.lulu.unison.source.TrackMatcher.best(target, listOf(c("Autre chose"))) { it })
+    }
+}
+
+/** Résolution multi-sources avec de fausses sources en mémoire. */
+class SourceResolverTest {
+    private class FakeSource(override val id: String, val tracks: List<Track>, var fail: Boolean = false, var slowMs: Long = 0) : fr.lulu.unison.source.MusicSource {
+        override val displayName = id
+        val streamed = mutableListOf<String>()
+        var searches = 0
+        override suspend fun health() = fr.lulu.unison.source.SourceHealth.Ok
+        override suspend fun search(query: String, limit: Int): List<Track> {
+            searches++
+            if (slowMs > 0) kotlinx.coroutines.delay(slowMs)
+            if (fail) throw fr.lulu.unison.source.AddonException.Unavailable("panne")
+            return tracks
+        }
+        override suspend fun stream(trackId: String, request: fr.lulu.unison.source.StreamRequest): StreamInfo? {
+            if (fail) throw fr.lulu.unison.source.AddonException.Unavailable("panne")
+            streamed += trackId
+            if (tracks.none { (fr.lulu.unison.source.SourceTrackId.parse(it.id)?.second ?: it.id) == trackId }) return null
+            return StreamInfo(url = "https://cdn.example.test/$trackId", expiresAtMs = Long.MAX_VALUE, sourceId = id, cacheKey = "$id:$trackId")
+        }
+        override fun invalidate(trackId: String) = Unit
+    }
+
+    private val ytTrack = Track("ytSweet0001", "Sweet Dreams (Are Made of This)", "Eurythmics", durationMs = 216_000)
+    private val youtube = FakeSource(SourceIds.YOUTUBE, listOf(ytTrack, Track("ytOther0002", "Autre", "X", durationMs = 100_000)))
+    private val addon = FakeSource("s1", listOf(Track("src:s1::hr/1", "Sweet Dreams (Are Made of This) - Remastered", "Eurythmics", durationMs = 217_000)))
+
+    private fun resolver(
+        settings: fr.lulu.unison.source.ResolverSettings = fr.lulu.unison.source.ResolverSettings("s1"),
+        shared: Boolean = false,
+        allowDownloads: Boolean = true,
+        present: Boolean = true,
+    ) = SourceResolver(youtube, { id -> if (id == "s1" && present) fr.lulu.unison.source.ImportedSource(addon, allowDownloads) else null }, { settings }, { shared })
+
+    @Test fun youtubeStaysTheDefault() = kotlinx.coroutines.runBlocking<Unit> {
+        val info = resolver(fr.lulu.unison.source.ResolverSettings()).resolve(TrackRef.of(ytTrack))
+        assertEquals(SourceIds.YOUTUBE, info.sourceId)
+        assertEquals(0, addon.searches)
+    }
+
+    @Test fun activeSourceServesTheSameRecording() = kotlinx.coroutines.runBlocking<Unit> {
+        val r = resolver()
+        assertEquals("s1", r.resolve(TrackRef.of(ytTrack)).sourceId)
+        assertEquals(listOf("hr/1"), addon.streamed)
+        // Correspondance gardée : pas de nouvelle recherche.
+        r.resolve(TrackRef.of(ytTrack))
+        assertEquals(1, addon.searches)
+    }
+
+    @Test fun fallsBackToYoutubeWhenMissingFailingOrSlow() = kotlinx.coroutines.runBlocking<Unit> {
+        val other = Track("ytOther0002", "Autre", "X", durationMs = 100_000)
+        assertEquals(SourceIds.YOUTUBE, resolver().resolve(TrackRef.of(other)).sourceId)
+        addon.fail = true
+        assertEquals(SourceIds.YOUTUBE, resolver().resolve(TrackRef.of(ytTrack)).sourceId)
+        addon.fail = false
+        addon.slowMs = 60_000
+        val started = System.currentTimeMillis()
+        assertEquals(SourceIds.YOUTUBE, resolver().resolve(TrackRef.of(ytTrack)).sourceId)
+        assertTrue(System.currentTimeMillis() - started < 15_000)
+    }
+
+    @Test fun noFallbackWhenTheUserSaysSo() = kotlinx.coroutines.runBlocking<Unit> {
+        val strict = resolver(fr.lulu.unison.source.ResolverSettings("s1", fallbackToYouTube = false))
+        val other = Track("ytOther0002", "Autre", "X", durationMs = 100_000)
+        assertTrue(runCatching { strict.resolve(TrackRef.of(other)) }.exceptionOrNull() is fr.lulu.unison.source.StreamUnavailableException)
+    }
+
+    @Test fun sharedSessionsAndDataSaverStayOnYoutube() = kotlinx.coroutines.runBlocking<Unit> {
+        assertEquals(SourceIds.YOUTUBE, resolver(shared = true).resolve(TrackRef.of(ytTrack)).sourceId)
+        assertEquals(SourceIds.YOUTUBE, resolver().resolve(TrackRef.of(ytTrack), fr.lulu.unison.source.StreamRequest.Capped(96)).sourceId)
+        assertEquals(0, addon.searches)
+    }
+
+    @Test fun downloadsRespectTheSourcePolicy() = kotlinx.coroutines.runBlocking<Unit> {
+        val r = resolver(allowDownloads = false)
+        assertEquals(SourceIds.YOUTUBE, r.resolve(TrackRef.of(ytTrack), purpose = fr.lulu.unison.source.StreamResolver.Purpose.DOWNLOAD).sourceId)
+        assertEquals("s1", r.resolve(TrackRef.of(ytTrack)).sourceId)
+    }
+
+    @Test fun sourceTracksPlayFromTheirSourceOrFromYoutube() = kotlinx.coroutines.runBlocking<Unit> {
+        val srcTrack = Track("src:s1::hr/1", "Sweet Dreams (Are Made of This)", "Eurythmics", durationMs = 216_500)
+        assertEquals("s1", resolver(fr.lulu.unison.source.ResolverSettings()).resolve(TrackRef.of(srcTrack)).sourceId)
+        // Source retirée (ou invité qui ne l'a pas) : le même enregistrement sur YouTube Music.
+        val gone = resolver(present = false).resolve(TrackRef.of(srcTrack))
+        assertEquals(SourceIds.YOUTUBE, gone.sourceId)
+        assertEquals("${SourceIds.YOUTUBE}:ytSweet0001", gone.cacheKey)
+        addon.fail = true
+        assertEquals(SourceIds.YOUTUBE, resolver().resolve(TrackRef.of(srcTrack)).sourceId)
+        val unknown = Track("src:s9::x", "Introuvable", "Personne", durationMs = 1_000)
+        assertTrue(runCatching { resolver().resolve(TrackRef.of(unknown)) }.exceptionOrNull() is fr.lulu.unison.source.StreamUnavailableException)
     }
 }

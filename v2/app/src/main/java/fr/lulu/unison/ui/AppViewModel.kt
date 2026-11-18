@@ -28,6 +28,7 @@ import fr.lulu.unison.youtube.ArtistPage
 import fr.lulu.unison.youtube.CollectionPage
 import fr.lulu.unison.youtube.Quality
 import fr.lulu.unison.youtube.SearchFilter
+import fr.lulu.unison.youtube.SongItem
 import fr.lulu.unison.youtube.Section
 import fr.lulu.unison.youtube.YtItem
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -83,6 +84,8 @@ data class SearchUi(
     val submitted: Boolean = false,
     val suggestions: List<String> = emptyList(),
     val results: Load<List<YtItem>>? = null,
+    /** Recherche dans la source importée choisie plutôt que dans YouTube Music. */
+    val inSource: Boolean = false,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -330,19 +333,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setFilter(f: SearchFilter) {
-        if (_search.value.filter == f) return
-        _search.value = _search.value.copy(filter = f)
+        if (_search.value.filter == f && !_search.value.inSource) return
+        _search.value = _search.value.copy(filter = f, inSource = false)
         if (_search.value.submitted) { _search.value = _search.value.copy(results = Load.Loading); runSearch() }
     }
+
+    /** Cherche dans la source importée choisie (titres seulement). */
+    fun searchInSource() {
+        if (_search.value.inSource) return
+        _search.value = _search.value.copy(inSource = true)
+        if (_search.value.submitted) { _search.value = _search.value.copy(results = Load.Loading); runSearch() }
+    }
+
+    /** Source importée choisie dans les réglages, s'il y en a une. */
+    val activeSource: StateFlow<SourceConfig?> = kotlinx.coroutines.flow.combine(settings, graph.sources.sources) { s, list ->
+        list.firstOrNull { it.id == s.activeSource }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private fun runSearch() {
         searchJob?.cancel()
         val (q, f) = _search.value.let { it.query to it.filter }
+        val source = activeSource.value?.takeIf { _search.value.inSource }
+        if (source == null && _search.value.inSource) _search.value = _search.value.copy(inSource = false)
         searchJob = viewModelScope.launch {
-            val r: Load<List<YtItem>> = runCatching { catalog.search(q, f) }.fold({ Load.Ready(it) }, { Load.Failed(OFFLINE) })
-            if (_search.value.query == q && _search.value.filter == f) _search.value = _search.value.copy(results = r)
+            val r: Load<List<YtItem>> = if (source != null) {
+                runCatching { graph.resolver.searchIn(source.id, q).map { SongItem(it) } }
+                    .fold({ Load.Ready(it) }, { Load.Failed("La source « ${source.name} » ne répond pas. Réessaie plus tard.") })
+            } else runCatching { catalog.search(q, f) }.fold({ Load.Ready(it) }, { Load.Failed(OFFLINE) })
+            val now = _search.value
+            if (now.query == q && now.filter == f && now.inSource == (source != null)) _search.value = now.copy(results = r)
         }
     }
+
+    fun setFallbackToYouTube(on: Boolean) = viewModelScope.launch { graph.prefs.setFallbackToYouTube(on) }
 
     // --- Écouter ensemble ---
 
