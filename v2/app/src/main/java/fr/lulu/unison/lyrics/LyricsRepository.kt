@@ -181,7 +181,7 @@ class LyricsRepository(
 
     private suspend fun readOffline(id: String): Lyrics? = withContext(Dispatchers.IO) {
         val f = offlineFile(id)?.takeIf { it.exists() } ?: return@withContext null
-        runCatching { json.decodeFromString(Lyrics.serializer(), f.readText()) }.getOrNull()
+        runCatching { Karaoke.cleaned(json.decodeFromString(Lyrics.serializer(), f.readText())) }.getOrNull()
     }
 
     /** Garde les paroles de [track] sur le téléphone, pour les afficher hors ligne. */

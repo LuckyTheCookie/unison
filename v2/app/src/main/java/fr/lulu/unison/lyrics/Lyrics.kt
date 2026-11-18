@@ -178,6 +178,18 @@ object Karaoke {
         return list
     }
 
+    /**
+     * Repasse [trimmed] sur des paroles déjà découpées en mots, par exemple gardées hors ligne par une version
+     * précédente de l'app (espaces doublés aux respirations).
+     */
+    fun cleaned(lyrics: Lyrics): Lyrics = lyrics.copy(
+        lines = lyrics.lines.map { line ->
+            val words = line.words ?: return@map line
+            val clean = trimmed(words) ?: return@map line.copy(text = "", words = null)
+            line.copy(text = clean.joinToString("") { it.text }, words = clean)
+        },
+    )
+
     /** Poids d'un mot : à peu près le temps qu'il faut pour le chanter (un idéogramme vaut une syllabe). */
     fun weight(text: String): Float = text.sumOf { c ->
         when {

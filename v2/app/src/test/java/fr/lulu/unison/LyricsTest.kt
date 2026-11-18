@@ -3,6 +3,7 @@ package fr.lulu.unison
 import okhttp3.OkHttpClient
 import fr.lulu.unison.lyrics.Karaoke
 import fr.lulu.unison.lyrics.Lrc
+import fr.lulu.unison.lyrics.LyricLine
 import fr.lulu.unison.lyrics.LyricWord
 import fr.lulu.unison.lyrics.Lyrics
 import fr.lulu.unison.lyrics.LyricsRepository
@@ -125,6 +126,17 @@ class KaraokeTest {
         val lrc = Lrc.parse("[00:01.00]<00:01.00>Un  <00:01.50> <00:02.00>deux<00:03.00>").single()
         assertEquals("Un deux", lrc.text)
         assertEquals(lrc.text, lrc.words!!.joinToString("") { it.text })
+    }
+
+    @Test fun lyricsKeptOfflineByAnOlderVersionAreCleaned() {
+        // Paroles gardées hors ligne avant la correction : respiration gardée comme espace doublée.
+        val old = LyricLine(1_000, "un  deux ", listOf(LyricWord(1_000, 1_400, "un "), LyricWord(1_400, 1_600, " "), LyricWord(1_600, 2_000, "deux ")))
+        val l = Karaoke.cleaned(Lyrics(listOf(old, LyricLine(3_000, "trois")), synced = true, source = "t"))
+        assertEquals("un deux", l.lines[0].text)
+        assertEquals(l.lines[0].text, l.lines[0].words!!.joinToString("") { it.text })
+        assertEquals(listOf(1_000L, 1_600L), l.lines[0].words!!.map { it.startMs })
+        // Une ligne sans minutage par mot reste telle quelle.
+        assertEquals(LyricLine(3_000, "trois"), l.lines[1])
     }
 
     @Test fun progressFillsCharactersInTime() {
