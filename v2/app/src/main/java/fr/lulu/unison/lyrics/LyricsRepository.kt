@@ -76,7 +76,7 @@ class LrclibProvider(private val http: OkHttpClient) : LyricsProvider {
 
         ranked.firstOrNull { !it.syncedLyrics.isNullOrBlank() }?.let { item ->
             val lines = Lrc.parse(item.syncedLyrics!!)
-            if (lines.isNotEmpty()) return@withContext Lyrics(lines, synced = true, source = name)
+            if (lines.isNotEmpty()) return@withContext Lyrics(lines, synced = true, source = name, wordSynced = lines.any { it.words != null })
         }
         ranked.firstOrNull { !it.plainLyrics.isNullOrBlank() }?.let { item ->
             lastPlain = Lyrics(Lrc.plain(item.plainLyrics!!), synced = false, source = name)
@@ -95,9 +95,15 @@ class NeteaseProvider(private val http: OkHttpClient) : LyricsProvider {
     @Serializable private data class Result(val songs: List<Song> = emptyList())
     @Serializable private data class Search(val result: Result? = null)
     @Serializable private data class Lrc(val lyric: String? = null)
-    @Serializable private data class LyricResp(val lrc: Lrc? = null)
+    @Serializable private data class LyricResp(val lrc: Lrc? = null, val yrc: Lrc? = null)
 
+    /** Paroles synchronisées à la ligne trouvées lors de la dernière recherche, quand il n'y avait pas de YRC. */
+    var lastLineSynced: Lyrics? = null
+        private set
+
+    /** Cherche d'abord les paroles mot à mot (YRC) ; à défaut, garde les paroles à la ligne dans [lastLineSynced]. */
     override suspend fun find(track: Track): Lyrics? = withContext(Dispatchers.IO) {
+        lastLineSynced = null
         val browser = "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140 Mobile Safari/537.36"
         val body = http.getText(
             "https://music.163.com/api/search/get".toHttpUrl().newBuilder()
@@ -117,23 +123,30 @@ class NeteaseProvider(private val http: OkHttpClient) : LyricsProvider {
             .take(3)
         for (song in best) {
             if (track.durationMs > 0 && abs(song.duration - track.durationMs) > 10_000) continue
-            val lrc = http.getText("https://music.163.com/api/song/lyric?id=${song.id}&lv=1", browser)
-                ?.let { runCatching { json.decodeFromString(LyricResp.serializer(), it).lrc?.lyric }.getOrNull() }
-            if (lrc.isNullOrBlank()) continue
+            val resp = http.getText("https://music.163.com/api/song/lyric/v1?id=${song.id}&lv=1&yv=1", browser)
+                ?.let { runCatching { json.decodeFromString(LyricResp.serializer(), it) }.getOrNull() } ?: continue
+            resp.yrc?.lyric?.takeIf { it.isNotBlank() }?.let { yrc ->
+                val lines = fr.lulu.unison.lyrics.Lrc.parseYrc(yrc).filterNot { fr.lulu.unison.lyrics.Lrc.isCredit(it.text) }
+                if (lines.count { it.text.isNotBlank() } >= 3) return@withContext Lyrics(lines, synced = true, source = name, wordSynced = true)
+            }
+            val lrc = resp.lrc?.lyric
+            if (lrc.isNullOrBlank() || lastLineSynced != null) continue
             val lines = fr.lulu.unison.lyrics.Lrc.parse(lrc).filterNot { fr.lulu.unison.lyrics.Lrc.isCredit(it.text) }
-            if (lines.count { it.text.isNotBlank() } >= 3) return@withContext Lyrics(lines, synced = true, source = name)
+            if (lines.count { it.text.isNotBlank() } >= 3) lastLineSynced = Lyrics(lines, synced = true, source = name)
         }
         null
     }
 }
 
 /**
- * Cherche les paroles chez plusieurs fournisseurs, synchronisées d'abord :
- * LRCLIB → NetEase → paroles simples de LRCLIB.
+ * Cherche les paroles chez plusieurs fournisseurs, les plus précises d'abord :
+ * mot à mot de NetEase (YRC) → LRCLIB (LRC, parfois enrichi) → NetEase à la ligne → paroles simples de LRCLIB.
+ * Les paroles synchronisées reçoivent toujours un minutage par mot, estimé quand la source n'en donne pas.
  */
 class LyricsRepository(http: OkHttpClient) {
     private val lrclib = LrclibProvider(http)
-    private val providers: List<LyricsProvider> = listOf(lrclib, NeteaseProvider(http))
+    private val netease = NeteaseProvider(http)
+    private val providers: List<LyricsProvider> = listOf(netease, lrclib)
     private val cache = ConcurrentHashMap<String, Lyrics>()
     private val missing = ConcurrentHashMap.newKeySet<String>()
 
@@ -145,11 +158,14 @@ class LyricsRepository(http: OkHttpClient) {
         cache[track.id]?.let { return it }
         if (track.id in missing) return null
         var plain: Lyrics? = null
+        var lineSynced: Lyrics? = null
         for (p in providers) {
             val found = runCatching { p.find(track) }.onFailure { Log.w("UnisonLyrics", "${p.name}", it) }.getOrNull()
             if (p === lrclib) plain = lrclib.lastPlain
-            if (found != null) { cache[track.id] = found; return found }
+            if (p === netease) lineSynced = netease.lastLineSynced
+            if (found != null) return Karaoke.complete(found).also { cache[track.id] = it }
         }
-        return plain?.also { cache[track.id] = it } ?: run { missing += track.id; null }
+        val best = lineSynced?.let(Karaoke::complete) ?: plain
+        return best?.also { cache[track.id] = it } ?: run { missing += track.id; null }
     }
 }

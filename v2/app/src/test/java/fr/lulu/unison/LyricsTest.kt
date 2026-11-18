@@ -1,7 +1,10 @@
 package fr.lulu.unison
 
 import okhttp3.OkHttpClient
+import fr.lulu.unison.lyrics.Karaoke
 import fr.lulu.unison.lyrics.Lrc
+import fr.lulu.unison.lyrics.LyricWord
+import fr.lulu.unison.lyrics.Lyrics
 import fr.lulu.unison.lyrics.LyricsRepository
 import fr.lulu.unison.lyrics.LrclibProvider
 import fr.lulu.unison.lyrics.NeteaseProvider
@@ -67,6 +70,9 @@ class LyricsProvidersLiveTest {
         assertNotNull(l); assertTrue(l!!.synced)
         assertTrue(l.lines.none { Lrc.isCredit(it.text) })
         assertTrue(l.lines.any { it.text.contains("lucky", ignoreCase = true) })
+        // NetEase donne ici le minutage mot à mot (YRC).
+        assertTrue(l.wordSynced)
+        assertTrue(l.lines.filter { it.text.isNotBlank() }.all { it.words != null })
     }
 
     @Test fun repositoryCaches() = runBlocking {
@@ -74,5 +80,71 @@ class LyricsProvidersLiveTest {
         val first = repo.lyricsFor(getLucky)
         assertNotNull(first)
         assertTrue(first === repo.lyricsFor(getLucky))
+    }
+}
+
+class KaraokeTest {
+    @Test fun parsesEnhancedLrcWords() {
+        val line = Lrc.parse("[00:12.00]<00:12.00>Un <00:12.40>mot <00:12.90>chanté<00:14.00>").single()
+        assertEquals("Un mot chanté", line.text)
+        val words = line.words!!
+        assertEquals(listOf("Un ", "mot ", "chanté"), words.map { it.text })
+        assertEquals(listOf(12_000L, 12_400L, 12_900L), words.map { it.startMs })
+        // La dernière balise, sans texte derrière, marque la fin du dernier mot.
+        assertEquals(14_000L, words.last().endMs)
+        assertEquals(line.text, words.joinToString("") { it.text })
+    }
+
+    @Test fun repeatedEnhancedLineIsShifted() {
+        val lines = Lrc.parse("[00:10.00][01:10.00]<00:10.00>Encore <00:10.50>une fois")
+        assertEquals(listOf(10_000L, 70_000L), lines.map { it.words!!.first().startMs })
+        assertEquals(70_500L, lines[1].words!![1].startMs)
+    }
+
+    @Test fun parsesNeteaseYrc() {
+        val yrc = """
+            {"t":0,"c":[{"tx":"作曲: "},{"tx":"Pharrell Williams"}]}
+            [31420,2670](31420,390,0)Like (31810,150,0)the (31960,630,0)legend (32590,150,0)of (32740,120,0)the (32860,1230,0)Phoenix
+            [35980,2250](35980,300,0)All (36280,360,0)ends (36640,210,0)with (36850,1380,0)beginnings
+        """.trimIndent()
+        val lines = Lrc.parseYrc(yrc)
+        assertEquals(2, lines.size)
+        assertEquals("Like the legend of the Phoenix", lines[0].text)
+        assertEquals(31_420L, lines[0].timeMs)
+        assertEquals(LyricWord(31_960, 32_590, "legend "), lines[0].words!![2])
+        assertEquals("Phoenix", lines[0].words!!.last().text)
+    }
+
+    @Test fun progressFillsCharactersInTime() {
+        val line = Lrc.parseYrc("[1000,2000](1000,1000,0)ab(2000,1000,0)cd").single()
+        assertEquals(0f, Karaoke.progress(line, 500), 0f)
+        assertEquals(1f, Karaoke.progress(line, 1_500), 0.001f) // moitié de « ab »
+        assertEquals(2f, Karaoke.progress(line, 2_000), 0.001f)
+        assertEquals(3f, Karaoke.progress(line, 2_500), 0.001f)
+        assertEquals(4f, Karaoke.progress(line, 9_000), 0f)
+    }
+
+    @Test fun estimatesWordsUntilTheNextLine() {
+        val raw = Lyrics(Lrc.parse("[00:01.00]Hello world\n[00:03.00]Next line here\n[00:05.00]"), synced = true, source = "t")
+        val l = Karaoke.complete(raw)
+        val first = l.lines[0].words!!
+        assertEquals(listOf("Hello ", "world"), first.map { it.text })
+        assertEquals(1_000L, first.first().startMs)
+        // « Hello » et « world » pèsent autant : le temps est partagé, et la ligne finit avant la suivante.
+        assertTrue(kotlin.math.abs((first[0].endMs - first[0].startMs) - (first[1].endMs - first[1].startMs)) <= 2)
+        assertTrue(first.last().endMs <= 3_000)
+        assertEquals(l.lines[0].text, first.joinToString("") { it.text })
+        // Ligne vide : pas de mots.
+        assertEquals(null, l.lines[2].words)
+    }
+
+    @Test fun estimateDoesNotDragOverInstrumentalBreaks() {
+        val l = Karaoke.complete(Lyrics(Lrc.parse("[00:01.00]Oh\n[01:00.00]Back"), synced = true, source = "t"))
+        assertTrue(l.lines[0].words!!.last().endMs < 5_000)
+    }
+
+    @Test fun ideogramsWeighMoreThanLetters() {
+        assertTrue(Karaoke.weight("爱") > Karaoke.weight("a"))
+        assertEquals(1f, Karaoke.weight("ab,") - Karaoke.weight("a,"), 0.001f)
     }
 }

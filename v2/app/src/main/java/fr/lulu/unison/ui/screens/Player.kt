@@ -40,6 +40,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -67,9 +69,14 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import fr.lulu.unison.R
+import fr.lulu.unison.lyrics.Karaoke
+import fr.lulu.unison.lyrics.LyricLine
 import fr.lulu.unison.lyrics.Lyrics
 import fr.lulu.unison.model.QueueItem
 import fr.lulu.unison.model.RepeatMode
@@ -436,8 +443,12 @@ private fun Modifier.fadeEdges(): Modifier = this
 
 @Composable
 private fun SyncedLyrics(lyrics: Lyrics, vm: AppViewModel) {
-    val position = rememberPosition(vm, 100)
-    val active = lyrics.indexAt(position + 150)
+    // Position lue à chaque image : seul le dessin de la ligne en cours en dépend, pas la composition.
+    val clock = remember { mutableLongStateOf(vm.positionMs()) }
+    LaunchedEffect(Unit) {
+        while (true) withFrameNanos { clock.longValue = vm.positionMs() }
+    }
+    val active by remember(lyrics) { derivedStateOf { lyrics.indexAt(clock.longValue + 150) } }
     val state = rememberLazyListState()
     BoxWithConstraints(Modifier.fillMaxSize().fadeEdges()) {
         // La ligne en cours se pose au tiers haut de la zone, hors du fondu des bords.
@@ -448,11 +459,19 @@ private fun SyncedLyrics(lyrics: Lyrics, vm: AppViewModel) {
         LazyColumn(state = state, contentPadding = PaddingValues(top = top, bottom = maxHeight * 0.6f), modifier = Modifier.fillMaxSize()) {
             itemsIndexed(lyrics.lines) { i, line ->
                 val isActive = i == active
-                val alpha by animateFloatAsState(if (isActive) 1f else if (i < active) 0.3f else 0.42f, tween(320, easing = Motion.Ease), label = "a")
+                // Lignes passées : pleines ; ligne en cours : remplie au fil du chant ; à venir : estompées.
+                val alpha by animateFloatAsState(if (isActive) 1f else if (i < active) 0.5f else 0.85f, tween(320, easing = Motion.Ease), label = "a")
                 val scale by animateFloatAsState(if (isActive) 1.03f else 0.96f, tween(320, easing = Motion.Ease), label = "s")
-                Text(
-                    line.text.ifBlank { "♪" },
-                    style = Type.Lyric, color = Ink.Primary,
+                KaraokeLine(
+                    line,
+                    filled = {
+                        when {
+                            i < active -> Float.MAX_VALUE
+                            i > active -> 0f
+                            line.text.isBlank() -> Float.MAX_VALUE
+                            else -> Karaoke.progress(line, clock.longValue)
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
                         .graphicsLayer { this.alpha = alpha; scaleX = scale; scaleY = scale; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f) }
                         .pressable(scale = 0.99f) { vm.send(Cmd.Seek(line.timeMs)) }
@@ -461,6 +480,48 @@ private fun SyncedLyrics(lyrics: Lyrics, vm: AppViewModel) {
             }
         }
     }
+}
+
+/**
+ * Une ligne de paroles dont les [filled] premiers caractères (fraction comprise) sont pleinement éclairés,
+ * le reste estompé. Le remplissage suit chaque ligne visuelle quand le texte passe à la ligne, et n'est lu
+ * qu'au dessin : il avance à chaque image sans recomposer.
+ */
+@Composable
+private fun KaraokeLine(line: LyricLine, filled: () -> Float, modifier: Modifier = Modifier) {
+    val text = line.text.ifBlank { "♪" }
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    Text(
+        text, style = Type.Lyric, color = Color.Transparent,
+        onTextLayout = { layout = it },
+        modifier = modifier.drawWithContent {
+            val l = layout ?: return@drawWithContent
+            drawText(l, color = Ink.Primary.copy(alpha = 0.32f))
+            val progress = filled().coerceIn(0f, text.length.toFloat())
+            if (progress <= 0f) return@drawWithContent
+            val whole = progress.toInt()
+            for (row in 0 until l.lineCount) {
+                val start = l.getLineStart(row)
+                val end = l.getLineEnd(row, visibleEnd = true)
+                if (progress <= start) break
+                if (start >= end) continue
+                val right = when {
+                    progress >= end -> l.getLineRight(row)
+                    else -> {
+                        // Bord du remplissage : début du caractère en cours plus la fraction déjà chantée.
+                        val box = l.getBoundingBox(whole.coerceIn(start, end - 1))
+                        box.left + box.width * (progress - whole)
+                    }
+                }
+                val top = l.getLineTop(row)
+                val bottom = l.getLineBottom(row)
+                clipRect(left = l.getLineLeft(row), top = top, right = right, bottom = bottom) {
+                    drawText(l, color = Ink.Primary)
+                }
+                if (progress < end) break
+            }
+        },
+    )
 }
 
 @Composable
