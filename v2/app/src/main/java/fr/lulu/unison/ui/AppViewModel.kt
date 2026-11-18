@@ -261,6 +261,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadHome() {
         _home.value = Load.Loading
+        // « Réessayer » recharge aussi « Tes artistes », resté vide si l'app a démarré sans réseau.
+        loadArtistFeed()
         viewModelScope.launch {
             _home.value = runCatching { catalog.home() }.fold({ Load.Ready(it) }, { Load.Failed(OFFLINE) })
         }
@@ -382,7 +384,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             subscriptions.ids.drop(1).collectLatest { delay(800); loadArtistFeed() }
         }
-        loadArtistFeed()
     }
 
     private companion object {
