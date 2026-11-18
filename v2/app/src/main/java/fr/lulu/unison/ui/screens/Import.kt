@@ -159,8 +159,8 @@ private fun Progress(s: ImportUi.Running) {
     val fraction = if (s.total > 0) s.done.toFloat() / s.total else 0f
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
         GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(18.dp)) {
-            Text("Recherche des titres…", style = Type.Heading, color = Ink.Primary)
-            Text("${s.done} sur ${s.total} · ${s.found} retrouvés", style = Type.Body, color = Ink.Secondary, modifier = Modifier.padding(top = 4.dp))
+            Text(if (s.artists) "Recherche des artistes…" else "Recherche des titres…", style = Type.Heading, color = Ink.Primary)
+            Text("${s.done} titres sur ${s.total} · ${s.found} retrouvés", style = Type.Body, color = Ink.Secondary, modifier = Modifier.padding(top = 4.dp))
             Box(Modifier.padding(top = 16.dp).fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)).background(Ink.FillStrong)) {
                 Box(Modifier.fillMaxWidth(fraction.coerceIn(0.02f, 1f)).height(6.dp).clip(RoundedCornerShape(50)).background(Color.White))
             }

@@ -119,7 +119,14 @@ sealed interface ImportUi {
     data object Idle : ImportUi
     data object Reading : ImportUi
     data class Ready(val name: String, val plan: ImportPlan) : ImportUi
-    data class Running(val name: String, val done: Int, val total: Int, val found: Int) : ImportUi
+    data class Running(
+        val name: String,
+        val done: Int,
+        val total: Int,
+        val found: Int,
+        /** Titres traités : on cherche maintenant les artistes à suivre. */
+        val artists: Boolean = false,
+    ) : ImportUi
     data class Finished(val name: String, val report: ImportReport) : ImportUi
     /** Un import a été interrompu (app fermée) : on peut le reprendre là où il en était. */
     data class Interrupted(val name: String) : ImportUi
@@ -254,6 +261,7 @@ class Importer(
             val counts = playlists.mapValues { it.value.size }
             ImportReport(favorites.size, counts, notFound, ignored, failed)
         }
+        if (plan.artists.isNotEmpty()) _state.value = ImportUi.Running(name, done, total, found, artists = true)
         val (followed, missingArtists) = runCatching { followArtists(plan.artists) }.getOrElse { 0 to plan.artists.map { it.name } }
         // Tout s'est bien passé : rien à reprendre (sauf si des recherches ont échoué faute de réseau).
         if (report.failed == 0) withContext(Dispatchers.IO) { pendingCsv.delete(); pendingName.delete(); matchesFile.delete() }
