@@ -1,6 +1,7 @@
 package fr.lulu.unison.ui.screens
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -41,6 +42,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -57,7 +61,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import fr.lulu.unison.R
@@ -83,6 +92,8 @@ import fr.lulu.unison.ui.theme.Motion
 import fr.lulu.unison.ui.theme.Radius
 import fr.lulu.unison.ui.theme.Type
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
@@ -130,7 +141,15 @@ fun PlayerScreen(vm: AppViewModel, page: PlayerPage, onPage: (PlayerPage) -> Uni
                     page, transitionSpec = { fadeIn(tween(Motion.Page, easing = Motion.Ease)) togetherWith fadeOut(tween(Motion.Fast)) }, label = "page",
                 ) { p ->
                     when (p) {
-                        PlayerPage.Art -> ArtPage(track?.cover, snap.anchor.playing)
+                        PlayerPage.Art -> ArtPage(
+                            cover = track?.cover,
+                            playing = snap.anchor.playing,
+                            nextCover = nextCover(snap),
+                            // « Précédent » recommence le titre après 5 s : la pochette voisine est alors la même.
+                            previousCover = { if (vm.positionMs() > 5_000) track?.cover else snap.history.lastOrNull()?.track?.cover ?: track?.cover },
+                            onNext = { vm.send(Cmd.Skip) },
+                            onPrevious = { vm.send(Cmd.Previous) },
+                        )
                         PlayerPage.Lyrics -> LyricsPage(vm)
                         PlayerPage.Queue -> QueuePage(vm, snap)
                     }
@@ -177,13 +196,143 @@ private fun PageToggle(iconOff: Int, iconOn: Int, label: String, active: Boolean
     }
 }
 
+/** Pochette du titre que « suivant » lancerait, ou null s'il n'y en a pas. */
+private fun nextCover(snap: SessionSnapshot): String? = when {
+    snap.queue.isNotEmpty() -> snap.queue.first().track.cover
+    snap.repeat == RepeatMode.ALL && snap.history.isNotEmpty() -> snap.history.first().track.cover
+    else -> null
+}
+
+/**
+ * Pochette qu'on fait glisser pour changer de titre : vers la gauche le suivant, vers la droite le précédent.
+ * Elle suit le doigt (avec un léger basculement), part au-delà d'un seuil ou d'un geste vif, et revient en
+ * ressort sinon. Le glissement vertical reste à l'écran parent, qui ferme le lecteur.
+ */
 @Composable
-private fun ArtPage(cover: String?, playing: Boolean) {
+private fun ArtPage(
+    cover: String?,
+    playing: Boolean,
+    nextCover: String?,
+    previousCover: () -> String?,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+) {
     val scale by animateFloatAsState(if (playing) 1f else 0.9f, spring(dampingRatio = 0.72f, stiffness = 280f), label = "art")
+    val offset = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    var previous by remember { mutableStateOf<String?>(null) }
+    // Pochette qui sortait quand le geste a abouti : tant que la session n'a pas changé de titre, on la garde hors champ.
+    var leaving by remember { mutableStateOf<String?>(null) }
+    var leavingSince by remember { mutableLongStateOf(0L) }
+    val currentCover by rememberUpdatedState(cover)
+    val canNext by rememberUpdatedState(nextCover != null)
+
+    // Le nouveau titre est arrivé : la pochette voisine, déjà au centre, devient la pochette courante sans saut.
+    LaunchedEffect(cover) {
+        if (leaving != null && leaving != cover) { offset.snapTo(0f); leaving = null }
+    }
+    // Garde-fou : si la session ne suit pas (titre identique, commande perdue), la pochette revient.
+    LaunchedEffect(leavingSince) {
+        if (leaving == null) return@LaunchedEffect
+        delay(1_500)
+        if (leaving != null) { leaving = null; offset.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 300f)) }
+    }
+
     BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
         val side = minOf(maxWidth, maxHeight)
-        Cover(cover, side, Modifier.graphicsLayer { scaleX = scale; scaleY = scale }, shape = Radius.Art)
+        val width = constraints.maxWidth.toFloat().coerceAtLeast(1f)
+        // Distance entre deux pochettes : la voisine entre par le bord de l'écran.
+        val step = width + with(LocalDensity.current) { 56.dp.toPx() }
+        val tracker = remember { VelocityTracker() }
+        var crossed by remember { mutableStateOf(false) }
+
+        fun settle(velocity: Float) {
+            val x = offset.value
+            val threshold = width * 0.28f
+            val fling = abs(velocity) > 1_100f
+            val direction = when {
+                (x < -threshold || (fling && velocity < 0 && x < 0)) && canNext -> -1
+                x > threshold || (fling && velocity > 0 && x > 0) -> 1
+                else -> 0
+            }
+            scope.launch {
+                if (direction == 0) {
+                    offset.animateTo(0f, spring(dampingRatio = 0.72f, stiffness = 380f), initialVelocity = velocity)
+                    return@launch
+                }
+                val outgoing = currentCover
+                val sameCover = direction > 0 && previous == outgoing
+                if (crossed.not()) haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                offset.animateTo(direction * step, tween(Motion.Page, easing = Motion.Ease), initialVelocity = velocity)
+                if (direction < 0) onNext() else onPrevious()
+                // « Précédent » qui recommence le titre : même pochette, on la remet simplement en place.
+                if (sameCover) offset.snapTo(0f)
+                else { leaving = outgoing; leavingSince = System.nanoTime() }
+            }
+        }
+
+        Box(
+            Modifier.fillMaxSize().pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = {
+                        tracker.resetTracking()
+                        crossed = false
+                        previous = previousCover()
+                        scope.launch { offset.stop() }
+                    },
+                    onDragEnd = { settle(tracker.calculateVelocity().x) },
+                    onDragCancel = { settle(0f) },
+                ) { change, dx ->
+                    change.consume()
+                    tracker.addPosition(change.uptimeMillis, change.position)
+                    val x = offset.value
+                    // Sans titre suivant, la pochette résiste et revient.
+                    val resist = if (x + dx < 0 && !canNext) 0.3f else 1f
+                    val nx = x + dx * resist
+                    val over = abs(nx) > width * 0.28f && (nx > 0 || canNext)
+                    if (over && !crossed) haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                    crossed = over
+                    scope.launch { offset.snapTo(nx) }
+                }
+            },
+            contentAlignment = Alignment.Center,
+        ) {
+            val shown = leaving == null || leaving == cover
+            // Voisines : la suivante à droite, la précédente à gauche, qui grandissent en approchant du centre.
+            if (nextCover != null) NeighbourCover(nextCover, side, { if (shown) offset.value + step else step }, step)
+            NeighbourCover(previous ?: cover, side, { if (shown) offset.value - step else -step }, step)
+            Cover(
+                cover, side,
+                Modifier.graphicsLayer {
+                    val x = if (shown) offset.value else 0f
+                    val f = (x / width).coerceIn(-1.5f, 1.5f)
+                    translationX = x
+                    rotationZ = f * 7f
+                    alpha = (1f - abs(f) * 0.55f).coerceIn(0f, 1f)
+                    scaleX = scale; scaleY = scale
+                },
+                shape = Radius.Art,
+            )
+        }
     }
+}
+
+/** Pochette voisine : placée à [x] du centre, invisible tant qu'elle est loin. */
+@Composable
+private fun NeighbourCover(url: String?, side: Dp, x: () -> Float, step: Float) {
+    Cover(
+        url, side,
+        Modifier.graphicsLayer {
+            val pos = x()
+            val near = (1f - abs(pos) / step).coerceIn(0f, 1f)
+            translationX = pos
+            alpha = near
+            val s = 0.86f + 0.14f * near
+            scaleX = s; scaleY = s
+        },
+        shape = Radius.Art,
+    )
 }
 
 /** Barre de progression : on peut la toucher ou la faire glisser pour se déplacer dans le titre. */
