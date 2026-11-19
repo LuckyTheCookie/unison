@@ -29,6 +29,8 @@ enum class QualityTier(val label: String) {
  */
 object QualityLabel {
     const val HIGH_KBPS = 256
+    /** Affiché pendant que la lecture passe de YouTube Music à la source choisie, avant que son format soit décodé. */
+    const val UPGRADING = "Augmentation de la qualité"
 
     fun of(decoded: DecodedFormat?, declared: StreamInfo? = null): QualityTier? {
         val mime = decoded?.mimeType?.lowercase() ?: return null

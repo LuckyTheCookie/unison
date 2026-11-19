@@ -96,6 +96,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.unit.sp
+import fr.lulu.unison.source.QualityLabel
 import fr.lulu.unison.source.QualityTier
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -425,7 +426,7 @@ fun SeekBar(vm: AppViewModel, modifier: Modifier = Modifier) {
         }
         Box(Modifier.fillMaxWidth()) {
             Text(formatTime(if (dragging) (dragFraction * duration).toLong() else position.coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)), style = Type.Time, color = Ink.Secondary, modifier = Modifier.align(Alignment.CenterStart))
-            QualityBadge(player.quality, player.format, Modifier.align(Alignment.Center))
+            QualityBadge(player.quality, player.format, player.upgrading, Modifier.align(Alignment.Center))
             Text(if (duration > 0) formatTime(duration) else "–:––", style = Type.Time, color = Ink.Secondary, modifier = Modifier.align(Alignment.CenterEnd))
         }
     }
@@ -434,23 +435,26 @@ fun SeekBar(vm: AppViewModel, modifier: Modifier = Modifier) {
 /**
  * Libellé de qualité entre les deux horodatages : « Sans perte », « Haute résolution », « Dolby Atmos » ou
  * « Haute qualité », d'après ce que le décodeur reçoit. Rien pour une qualité standard ou inconnue.
+ * Pendant la bascule de YouTube Music vers la source choisie : « Augmentation de la qualité ».
  * Un reflet balaie les libellés sans perte (dessiné à chaque image sans recomposer).
  */
 @Composable
-private fun QualityBadge(tier: QualityTier?, format: String?, modifier: Modifier = Modifier) {
+private fun QualityBadge(tier: QualityTier?, format: String?, upgrading: Boolean, modifier: Modifier = Modifier) {
     AnimatedContent(
-        tier, modifier = modifier,
+        if (upgrading) null to true else tier to false, modifier = modifier,
         transitionSpec = { fadeIn(tween(Motion.Slow, easing = Motion.Ease)) togetherWith fadeOut(tween(Motion.Fast)) },
         label = "qualité",
-    ) { t ->
-        if (t == null) { Spacer(Modifier.height(16.dp)); return@AnimatedContent }
-        val sweep = t != QualityTier.HIGH && !LocalReduceMotion.current
+    ) { (t, up) ->
+        if (t == null && !up) { Spacer(Modifier.height(16.dp)); return@AnimatedContent }
+        val label = t?.label ?: QualityLabel.UPGRADING
+        val premium = t != QualityTier.HIGH
+        val sweep = premium && !LocalReduceMotion.current
         val shimmer = rememberInfiniteTransition(label = "reflet")
         val phase = shimmer.animateFloat(0f, 1f, infiniteRepeatable(tween(3_000, easing = LinearEasing)), label = "phase")
         Row(
             Modifier
-                .semantics { contentDescription = listOfNotNull(t.label, format).joinToString(", ") }
-                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen; alpha = if (t != QualityTier.HIGH) 0.7f else 0.5f }
+                .semantics { contentDescription = if (up) label else listOfNotNull(label, format).joinToString(", ") }
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen; alpha = if (premium) 0.7f else 0.5f }
                 .drawWithContent {
                     drawContent()
                     if (!sweep) return@drawWithContent
@@ -463,9 +467,9 @@ private fun QualityBadge(tier: QualityTier?, format: String?, modifier: Modifier
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Glyph(if (t != QualityTier.HIGH) R.drawable.ic_sparkles_fill else R.drawable.ic_headphone_line, tint = Ink.Primary, size = 12.dp)
+            Glyph(if (premium) R.drawable.ic_sparkles_fill else R.drawable.ic_headphone_line, tint = Ink.Primary, size = 12.dp)
             Spacer(Modifier.width(4.dp))
-            Text(t.label, style = Type.Time.copy(fontWeight = androidx.compose.ui.text.font.FontWeight(600)), color = Ink.Primary)
+            Text(label, style = Type.Time.copy(fontWeight = androidx.compose.ui.text.font.FontWeight(600)), color = Ink.Primary)
         }
     }
 }

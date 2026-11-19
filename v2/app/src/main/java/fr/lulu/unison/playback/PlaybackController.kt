@@ -45,6 +45,7 @@ import androidx.media3.session.SessionToken
 import fr.lulu.unison.data.Prefs
 import fr.lulu.unison.data.Settings
 import fr.lulu.unison.model.PlayAnchor
+import fr.lulu.unison.model.Track
 import fr.lulu.unison.offline.Connectivity
 import fr.lulu.unison.offline.Downloads
 import fr.lulu.unison.offline.OfflineSkipper
@@ -109,6 +110,8 @@ class PlaybackController(
         val quality: QualityTier? = null,
         /** Résumé technique du format décodé (« FLAC · 24 bits · 96 kHz »). */
         val format: String? = null,
+        /** Bascule en cours vers le flux de la source choisie : le libellé attend que son format soit décodé. */
+        val upgrading: Boolean = false,
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -131,6 +134,9 @@ class PlaybackController(
     private var prefetchedUid: String? = null
     private var prefetchingUid: String? = null
     private var prefetchRetryAt = 0L
+    private var upgradeJob: Job? = null
+    private var lookaheadJob: Job? = null
+    private var lookaheadKey: Any? = null
     /** Titres dont la résolution a échoué : ils ne sont pas préparés à l'avance. */
     private val unplayable = HashSet<String>()
     private var startJob: Job? = null
@@ -221,10 +227,16 @@ class PlaybackController(
         // À plusieurs, chaque titre se termine en pause : le suivant part à l'heure commune, pas dès que ce téléphone a fini.
         if (exo.pauseAtEndOfMediaItems != s.shared) exo.pauseAtEndOfMediaItems = s.shared
         val moved = place(item, a)
+        // Écoute devenue partagée sur un titre passé à la source : retour au fichier YouTube Music des autres.
+        if (s.shared && exo.currentMediaItem?.mediaId == item.uid && exo.currentMediaItem?.let(::viaOf) != null) {
+            Log.i(TAG, "écoute partagée : retour à YouTube Music")
+            reload(item)
+        }
         val anchorChanged = moved || a != lastAnchor
         lastAnchor = a
         follow(a, s.shared, anchorChanged)
         prepareNext(Gapless.upcoming(s))
+        lookahead(s)
     }
 
     /**
@@ -293,9 +305,10 @@ class PlaybackController(
         known[item.uid] = item
         finishedUid = null
         retries = 0
-        _state.update { it.copy(loadedUid = item.uid, error = null) }
+        _state.update { it.copy(loadedUid = item.uid, error = null, upgrading = false) }
         applyVolume()
         updateQuality()
+        improve(item)
     }
 
     /** Recalcule le libellé de qualité du titre en cours. */
@@ -317,6 +330,8 @@ class PlaybackController(
     private fun unload() {
         startJob?.cancel(); startJob = null
         prefetchJob?.cancel(); prefetchJob = null; prefetchedUid = null
+        upgradeJob?.cancel(); upgradeJob = null
+        lookaheadJob?.cancel(); lookaheadJob = null; lookaheadKey = null
         loaded = null
         lastAnchor = null
         finishedUid = null
@@ -348,7 +363,7 @@ class PlaybackController(
         val t = item.track
         return MediaItem.Builder()
             .setMediaId(item.uid)
-            .setUri(Uri.parse(TrackUri.build(t)))
+            .setUri(Uri.parse(TrackUri.build(refOf(t))))
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(t.title)
@@ -358,6 +373,86 @@ class PlaybackController(
                     .build(),
             )
             .build()
+    }
+
+    /** [t] pour la résolution, avec la source importée dont le flux est déjà connu : la lecture y part directement. */
+    private fun refOf(t: Track): TrackRef = TrackRef.of(t).let { it.copy(via = streams.readySource(it, settings.quality.toRequest())) }
+
+    private fun viaOf(m: MediaItem): String? = m.localConfiguration?.uri?.let { TrackUri.parse(it.toString()) }?.via
+
+    /**
+     * Titre parti sur YouTube Music alors qu'une source importée est choisie : la recherche continue en parallèle,
+     * sans le délai court de la résolution, et la lecture bascule sur la source si elle répond pendant le titre.
+     */
+    private fun improve(item: QueueItem) {
+        upgradeJob?.cancel(); upgradeJob = null
+        val already = (0 until exo.mediaItemCount).map { exo.getMediaItemAt(it) }.firstOrNull { it.mediaId == item.uid }?.let(::viaOf)
+        if (already != null || downloads.isComplete(item.track.id)) return
+        val ref = TrackRef.of(item.track)
+        val request = settings.quality.toRequest()
+        upgradeJob = scope.launch {
+            val stream = withContext(Dispatchers.IO) { streams.upgrade(ref, request) } ?: return@launch
+            swap(item, stream)
+        }
+    }
+
+    /** Remplace à chaud le flux YouTube Music de [item] par [stream], à la position où en est la lecture. */
+    private suspend fun swap(item: QueueItem, stream: StreamInfo) {
+        val ref = TrackRef.of(item.track)
+        // La résolution redit si la source peut encore servir ce titre : écoute à plusieurs commencée entre-temps,
+        // économie de données activée, autre source choisie.
+        fun allowed() = loaded?.uid == item.uid && exo.currentMediaItem?.mediaId == item.uid &&
+            exo.playbackState != Player.STATE_IDLE && streams.readySource(ref, settings.quality.toRequest()) == stream.sourceId
+        // Sans repli vers YouTube Music, la résolution a déjà attendu la source : le titre en vient.
+        if (!allowed() || declared[item.track.id]?.cacheKey == stream.cacheKey) return
+        Log.i(TAG, "bascule vers la source ${stream.sourceId}")
+        _state.update { it.copy(upgrading = true) }
+        // En-têtes et début du fichier déjà là : la bascule n'attend plus que les données à la position courante.
+        warm(stream)
+        if (!allowed()) { _state.update { it.copy(upgrading = false) }; return }
+        declare(item.track.id, stream)
+        reload(item)
+    }
+
+    /**
+     * Recharge l'élément en cours de [item] avec le flux que désigne désormais [mediaItem], là où en est la lecture.
+     * Le nouvel élément est rejoint directement à cette position, puis l'ancien retiré : remplacer l'élément en
+     * cours le ferait repartir de zéro.
+     */
+    private fun reload(item: QueueItem) {
+        val index = exo.currentMediaItemIndex
+        val position = exo.currentPosition
+        decoded.remove(item.uid)
+        exo.addMediaItem(index + 1, mediaItem(item))
+        exo.seekTo(index + 1, position)
+        exo.removeMediaItem(index)
+        updateQuality()
+    }
+
+    /**
+     * Cherche dans la source choisie les prochains titres de la file pendant que celui-ci joue : quand vient leur
+     * tour, ils partent directement sur la source, sans passer par YouTube Music le temps qu'elle réponde.
+     */
+    private fun lookahead(s: SessionSnapshot) {
+        val current = s.anchor.item?.track?.id
+        val request = settings.quality.toRequest()
+        val ahead = (sequenceOf(Gapless.upcoming(s)).filterNotNull() + s.queue.asSequence())
+            .filter { it.track.id != current && !downloads.isComplete(it.track.id) }
+            .distinctBy { it.track.id }
+            .take(LOOKAHEAD)
+            .map { TrackRef.of(it.track) }
+            .toList()
+        val key = listOf(ahead, request, s.shared, settings.activeSource)
+        if (key == lookaheadKey) return
+        lookaheadKey = key
+        lookaheadJob?.cancel()
+        lookaheadJob = scope.launch {
+            // Un titre à la fois, le plus proche d'abord : la source n'est pas sollicitée pour toute la file d'un coup.
+            for (ref in ahead) {
+                withContext(Dispatchers.IO) { streams.upgrade(ref, request) } ?: continue
+                if (loaded != null) prepareNext(Gapless.upcoming(sessions.snapshot.value))
+            }
+        }
     }
 
     /**
@@ -374,15 +469,17 @@ class PlaybackController(
         val mode = if (repeatOne) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
         if (exo.repeatMode != mode) exo.repeatMode = mode
         val count = exo.mediaItemCount
-        val present = if (count > 1) exo.getMediaItemAt(1).mediaId else null
-        if (present != wanted?.uid || count > 2) {
+        val present = if (count > 1) exo.getMediaItemAt(1) else null
+        val target = wanted?.let(::mediaItem)
+        // Même titre mais désormais trouvé dans la source choisie : il est remplacé tant qu'il n'a pas commencé.
+        if (present?.mediaId != wanted?.uid || present?.localConfiguration?.uri != target?.localConfiguration?.uri || count > 2) {
             if (count > 1) exo.removeMediaItems(1, count)
             known.keys.retainAll(setOf(current.uid))
             // Le suivant n'entre dans la liste qu'une fois son flux trouvé : un titre introuvable ne doit pas
             // faire échouer celui qui joue.
-            if (wanted != null && prefetchedUid == wanted.uid) {
+            if (wanted != null && target != null && prefetchedUid == wanted.uid) {
                 known[wanted.uid] = wanted
-                exo.addMediaItem(mediaItem(wanted))
+                exo.addMediaItem(target)
             }
         }
         if (wanted != null && prefetchedUid != wanted.uid) prefetch(wanted)
@@ -405,7 +502,7 @@ class PlaybackController(
             scope.launch { if (loaded != null) prepareNext(Gapless.upcoming(sessions.snapshot.value)) }
             return
         }
-        val ref = TrackRef.of(next.track)
+        val ref = refOf(next.track)
         val request = settings.quality.toRequest()
         prefetchJob = scope.launch {
             val stream = runCatching { withContext(Dispatchers.IO) { streams.resolve(ref, request) } }
@@ -421,17 +518,26 @@ class PlaybackController(
             prefetchedUid = next.uid
             // La session a pu bouger pendant la résolution : on repart de son état actuel.
             if (loaded != null) prepareNext(Gapless.upcoming(sessions.snapshot.value))
-            runCatching {
-                runInterruptible(Dispatchers.IO) {
-                    val spec = DataSpec.Builder()
-                        .setUri(Uri.parse(stream.url))
-                        .setKey(stream.cacheKey)
-                        .setHttpRequestHeaders(stream.headers)
-                        .setLength(PREFETCH_BYTES)
-                        .build()
-                    CacheWriter(cacheFactory.createDataSource(), spec, null, null).cache()
-                }
-            }.onFailure { if (it !is CancellationException) Log.d(TAG, "pré-chargement interrompu (${it::class.simpleName})") }
+            warm(stream)
+        }
+    }
+
+    /** Met en cache le début du fichier de [stream], sans le lire. */
+    private suspend fun warm(stream: StreamInfo) {
+        try {
+            runInterruptible(Dispatchers.IO) {
+                val spec = DataSpec.Builder()
+                    .setUri(Uri.parse(stream.url))
+                    .setKey(stream.cacheKey)
+                    .setHttpRequestHeaders(stream.headers)
+                    .setLength(PREFETCH_BYTES)
+                    .build()
+                CacheWriter(cacheFactory.createDataSource(), spec, null, null).cache()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.d(TAG, "pré-chargement interrompu (${e::class.simpleName})")
         }
     }
 
@@ -591,11 +697,16 @@ class PlaybackController(
         override fun onAudioInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format, decoderReuseEvaluation: DecoderReuseEvaluation?) {
             // Le format appartient au titre dont les échantillons sont lus, qui peut être le suivant (enchaînement).
             if (eventTime.timeline.isEmpty || eventTime.windowIndex >= eventTime.timeline.windowCount) return
-            val uid = eventTime.timeline.getWindow(eventTime.windowIndex, Timeline.Window()).mediaItem.mediaId
+            val item = eventTime.timeline.getWindow(eventTime.windowIndex, Timeline.Window()).mediaItem
+            val uid = item.mediaId
             decoded[uid] = decodedOf(format)
             if (decoded.size > 8) decoded.keys.retainAll(known.keys + uid)
             Log.d(TAG, "format décodé : ${QualityLabel.summary(decoded[uid], null) ?: format.sampleMimeType}")
-            if (uid == loaded?.uid) updateQuality()
+            if (uid == loaded?.uid) {
+                // Seul le format du flux de la source met fin à la bascule, pas un dernier de YouTube Music.
+                if (_state.value.upgrading && viaOf(item) != null) _state.update { it.copy(upgrading = false) }
+                updateQuality()
+            }
         }
 
         override fun onAudioUnderrun(eventTime: AnalyticsListener.EventTime, bufferSize: Int, bufferSizeMs: Long, elapsedSinceLastFeedMs: Long) {
@@ -679,6 +790,7 @@ class PlaybackController(
 
         override fun onPlayerError(error: PlaybackException) {
             val item = loaded ?: return
+            if (_state.value.upgrading) _state.update { it.copy(upgrading = false) }
             val causes = generateSequence<Throwable>(error) { it.cause }.toList()
             val expired = causes.any { it is HttpDataSource.InvalidResponseCodeException && it.responseCode in EXPIRED_CODES }
             val unavailable = causes.any { it is StreamUnavailableException }
@@ -752,6 +864,8 @@ class PlaybackController(
         /** Durée du titre suivant qu'ExoPlayer garde prête pendant le titre en cours. */
         const val PRELOAD_US = 20_000_000L
         const val PREFETCH_RETRY_MS = 15_000L
+        /** Titres de la file cherchés à l'avance dans la source choisie. */
+        const val LOOKAHEAD = 3
         const val OFFLINE_MISSING = "Hors ligne : titre non téléchargé"
         const val OFFLINE_NOTHING = "Hors ligne : aucun titre téléchargé à suivre"
         val EXPIRED_CODES = setOf(403, 410)
