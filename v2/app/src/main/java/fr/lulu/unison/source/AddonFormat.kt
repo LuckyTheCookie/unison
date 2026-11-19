@@ -94,7 +94,7 @@ object AddonFormat {
                 qualityOptions = options,
                 defaultQuality = defaultQuality,
                 defaults = defaults,
-                proprietaryAuth = o.flag("bitchordAuth") == true || o.flag("requiresAuth") == true,
+                proprietaryAuth = o.flag("bitchordAuth") == false || o.flag("requiresAuth") == false,
             ),
         )
     }
