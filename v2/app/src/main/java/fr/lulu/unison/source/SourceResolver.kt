@@ -3,7 +3,13 @@ package fr.lulu.unison.source
 import android.util.Log
 import fr.lulu.unison.youtube.Quality
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.ConcurrentHashMap
 
@@ -14,6 +20,15 @@ interface StreamResolver {
 
     /** Oublie le flux connu de [id] (adresse expirée) ; la prochaine résolution le redemande. */
     fun invalidate(id: String)
+
+    /**
+     * Lecture : cherche [ref] dans la source importée choisie pendant que YouTube Music le joue déjà, avec plus de
+     * temps que [resolve] n'en laisse. Flux de la source, ou null s'il n'y a rien de mieux à jouer.
+     */
+    suspend fun upgrade(ref: TrackRef, request: StreamRequest): StreamInfo? = null
+
+    /** Source importée dont le flux de [ref] est déjà connu : un [TrackRef.via] qui la désigne se lit sans attente. */
+    fun readySource(ref: TrackRef, request: StreamRequest): String? = null
 
     enum class Purpose { PLAY, DOWNLOAD }
 }
@@ -34,8 +49,9 @@ class ImportedSource(val source: MusicSource, val allowDownloads: Boolean)
  *
  * - Titre d'une source importée (`src:…`) : cette source ; si elle n'est plus là, ne l'a plus ou ne répond pas,
  *   le même enregistrement est cherché sur YouTube Music (titre, artiste, durée).
- * - Titre YouTube Music, avec une source importée choisie : le même enregistrement est cherché dans la source
- *   ([TrackMatcher]) ; s'il n'y est pas, ou si la source tarde, YouTube Music le joue (repli).
+ * - Titre YouTube Music, avec une source importée choisie : la lecture part sur YouTube Music sans attendre, et
+ *   [upgrade] cherche en parallèle le même enregistrement dans la source ([TrackMatcher]) ; le lecteur bascule
+ *   dessus une fois trouvé, en le désignant par [TrackRef.via]. Sans repli autorisé, la source est attendue.
  * - Écoute à plusieurs : les titres YouTube restent sur YouTube pour que tous les téléphones jouent exactement
  *   le même enregistrement (la synchronisation en dépend) ; un titre d'une source importée y est d'abord cherché
  *   sur YouTube Music, et ne vient de la source que s'il n'y est pas.
@@ -49,13 +65,18 @@ class SourceResolver(
     /** Vrai pendant une écoute à plusieurs. */
     private val shared: () -> Boolean = { false },
     private val now: () -> Long = System::currentTimeMillis,
+    private val background: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) : StreamResolver {
     private class Match(val trackId: String?, val until: Long)
+    private class Found(val source: MusicSource, val trackId: String, val info: StreamInfo)
 
     /** Correspondances déjà établies : « source|titre » → identifiant dans l'autre source (null : absent). */
     private val matches = ConcurrentHashMap<String, Match>()
     /** Source et identifiant qui ont servi le dernier flux de chaque titre, pour [invalidate]. */
     private val served = ConcurrentHashMap<String, Pair<MusicSource, String>>()
+    /** Flux de la source importée déjà trouvés, par titre YouTube Music. */
+    private val found = ConcurrentHashMap<String, Found>()
+    private val pending = ConcurrentHashMap<String, Deferred<Found?>>()
 
     override suspend fun resolve(ref: TrackRef, request: StreamRequest, purpose: StreamResolver.Purpose): StreamInfo {
         val s = settings()
@@ -79,18 +100,72 @@ class SourceResolver(
             return served(ref.id, youtube, ytId, youtube.stream(ytId, request) ?: throw StreamUnavailableException("Titre indisponible"))
         }
 
-        val imp = s.activeSource.takeIf { it != SourceIds.YOUTUBE }?.let(imported)
-        val substitute = imp != null && !shared() && request == StreamRequest.Best &&
-            (purpose == StreamResolver.Purpose.PLAY || imp.allowDownloads)
-        if (imp != null && substitute) {
-            val found = attempt(budget) {
-                val trackId = matchIn(imp.source, imp.source.id, ref, budget)
-                trackId?.let { id -> imp.source.stream(id, request)?.let { id to it } }
+        // Élément du lecteur déjà passé sur la source : rouvert (saut, nouvel essai), il en garde le fichier, même si
+        // l'écoute est devenue partagée ou l'économie de données activée entre-temps.
+        if (ref.via != null && purpose == StreamResolver.Purpose.PLAY) {
+            found[ref.id]?.takeIf { it.source.id == ref.via && fresh(it) }?.let { return served(ref.id, it.source, it.trackId, it.info) }
+        }
+        val imp = substituteFor(ref, request)?.takeIf { purpose == StreamResolver.Purpose.PLAY || it.allowDownloads }
+        if (imp != null) {
+            val f = when {
+                purpose == StreamResolver.Purpose.DOWNLOAD -> attempt(budget) { lookup(imp.source, ref, request, budget) }
+                ref.via == imp.source.id -> attempt(budget) { find(imp.source, ref, request) }
+                // Sans repli, c'est la source ou rien : mieux vaut lui laisser le temps de répondre.
+                !s.fallbackToYouTube -> find(imp.source, ref, request)
+                else -> null
             }
-            if (found != null) return served(ref.id, imp.source, found.first, found.second)
+            if (f != null) return served(ref.id, f.source, f.trackId, f.info)
             if (!s.fallbackToYouTube) throw StreamUnavailableException("Titre absent de la source choisie")
         }
         return served(ref.id, youtube, ref.id, youtube.stream(ref.id, request) ?: throw StreamUnavailableException("Titre indisponible"))
+    }
+
+    override suspend fun upgrade(ref: TrackRef, request: StreamRequest): StreamInfo? {
+        val imp = substituteFor(ref, request) ?: return null
+        return find(imp.source, ref, request)?.info
+    }
+
+    override fun readySource(ref: TrackRef, request: StreamRequest): String? =
+        substituteFor(ref, request)?.let { known(it.source, ref) }?.source?.id
+
+    /** Source importée qui peut jouer à la place de YouTube Music le titre YouTube [ref], ou null. */
+    private fun substituteFor(ref: TrackRef, request: StreamRequest): ImportedSource? {
+        if (SourceTrackId.parse(ref.id) != null || shared() || request != StreamRequest.Best) return null
+        return settings().activeSource.takeIf { it != SourceIds.YOUTUBE }?.let(imported)
+    }
+
+    /**
+     * [ref] et son flux dans [source], avec [UPGRADE_BUDGET_MS]. Les demandes simultanées d'un même titre
+     * (préchargement de la file, puis lecture) partagent une seule recherche, qui va à son terme même si plus
+     * personne ne l'attend : un serveur qui démarre à froid n'est attendu qu'une fois.
+     */
+    private suspend fun find(source: MusicSource, ref: TrackRef, request: StreamRequest): Found? {
+        known(source, ref)?.let { return it }
+        val key = "${source.id}|${ref.id}"
+        val search = pending.computeIfAbsent(key) {
+            // Démarrage différé : la recherche ne doit pas pouvoir finir (et se retirer) avant d'être enregistrée.
+            background.async(start = CoroutineStart.LAZY) {
+                attempt(UPGRADE_BUDGET_MS) { lookup(source, ref, request, UPGRADE_BUDGET_MS) }?.also { remember(ref.id, it) }
+            }
+        }
+        search.invokeOnCompletion { pending.remove(key, search) }
+        search.start()
+        return search.await()
+    }
+
+    private suspend fun lookup(source: MusicSource, ref: TrackRef, request: StreamRequest, budgetMs: Long): Found? {
+        val trackId = matchIn(source, source.id, ref, budgetMs) ?: return null
+        return source.stream(trackId, request)?.let { Found(source, trackId, it) }
+    }
+
+    private fun known(source: MusicSource, ref: TrackRef): Found? = found[ref.id]?.takeIf { it.source === source && fresh(it) }
+
+    private fun fresh(f: Found) = f.info.expiresAtMs - EXPIRY_MARGIN_MS > now()
+
+    private fun remember(id: String, f: Found) {
+        found[id] = f
+        if (found.size > MAX_FOUND) found.entries.removeIf { !fresh(it.value) }
+        Log.d(TAG, "titre trouvé dans la source ${f.source.id}")
     }
 
     private fun served(id: String, source: MusicSource, trackId: String, info: StreamInfo): StreamInfo {
@@ -132,6 +207,7 @@ class SourceResolver(
 
     override fun invalidate(id: String) {
         served.remove(id)?.let { (source, trackId) -> source.invalidate(trackId) }
+        found.remove(id)
         if (SourceTrackId.parse(id) == null) youtube.invalidate(id)
     }
 
@@ -139,6 +215,11 @@ class SourceResolver(
         const val TAG = "UnisonSources"
         /** Temps accordé à une source importée avant de passer à YouTube Music, en lecture. */
         const val PLAY_BUDGET_MS = 6_000L
+        /** Recherche menée pendant que YouTube Music joue : de quoi laisser démarrer un serveur endormi. */
+        const val UPGRADE_BUDGET_MS = 20_000L
+        /** Un flux trouvé n'est plus proposé à moins de cette marge de son expiration. */
+        const val EXPIRY_MARGIN_MS = 2 * 60_000L
+        const val MAX_FOUND = 64
         const val DOWNLOAD_BUDGET_MS = 20_000L
         const val SEARCH_LIMIT = 10
         const val SEARCH_PAGE = 30

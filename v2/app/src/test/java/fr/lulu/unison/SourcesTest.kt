@@ -1,9 +1,11 @@
 package fr.lulu.unison
 
 import fr.lulu.unison.model.Track
+import fr.lulu.unison.source.ResolverSettings
 import fr.lulu.unison.source.SourceIds
 import fr.lulu.unison.source.SourceResolver
 import fr.lulu.unison.source.StreamInfo
+import fr.lulu.unison.source.StreamRequest
 import fr.lulu.unison.source.TrackRef
 import fr.lulu.unison.source.TrackUri
 import fr.lulu.unison.source.YouTubeSource
@@ -13,6 +15,14 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runTest
 
 class TrackUriTest {
     @Test fun roundTripKeepsEverything() {
@@ -26,6 +36,12 @@ class TrackUriTest {
         assertEquals(TrackRef("khnokW3Mw24"), TrackUri.parse("unison://track/khnokW3Mw24"))
         assertNull(TrackUri.parse("https://example.test/track/x"))
         assertNull(TrackUri.parse("unison://track?ti=sans-id"))
+    }
+
+    @Test fun pinnedSourceSurvivesTheRoundTrip() {
+        val ref = TrackRef("khnokW3Mw24", "T", "A", via = "ab12")
+        assertEquals(ref, TrackUri.parse(TrackUri.build(ref)))
+        assertNull(TrackUri.parse(TrackUri.build(ref.copy(via = null)))?.via)
     }
 
     @Test fun youtubeIdHasNoQueryNoise() {
@@ -128,8 +144,9 @@ class TrackMatcherTest {
 }
 
 /** Résolution multi-sources avec de fausses sources en mémoire. */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class SourceResolverTest {
-    private class FakeSource(override val id: String, val tracks: List<Track>, var fail: Boolean = false, var slowMs: Long = 0) : fr.lulu.unison.source.MusicSource {
+    private class FakeSource(override val id: String, val tracks: List<Track>, var fail: Boolean = false, var slowMs: Long = 0, var expiresAt: Long = Long.MAX_VALUE) : fr.lulu.unison.source.MusicSource {
         override val displayName = id
         val streamed = mutableListOf<String>()
         var searches = 0
@@ -144,7 +161,7 @@ class SourceResolverTest {
             if (fail) throw fr.lulu.unison.source.AddonException.Unavailable("panne")
             streamed += trackId
             if (tracks.none { (fr.lulu.unison.source.SourceTrackId.parse(it.id)?.second ?: it.id) == trackId }) return null
-            return StreamInfo(url = "https://cdn.example.test/$trackId", expiresAtMs = Long.MAX_VALUE, sourceId = id, cacheKey = "$id:$trackId")
+            return StreamInfo(url = "https://cdn.example.test/$trackId", expiresAtMs = expiresAt, sourceId = id, cacheKey = "$id:$trackId")
         }
         override fun invalidate(trackId: String) = Unit
     }
@@ -153,12 +170,22 @@ class SourceResolverTest {
     private val youtube = FakeSource(SourceIds.YOUTUBE, listOf(ytTrack, Track("ytOther0002", "Autre", "X", durationMs = 100_000)))
     private val addon = FakeSource("s1", listOf(Track("src:s1::hr/1", "Sweet Dreams (Are Made of This) - Remastered", "Eurythmics", durationMs = 217_000)))
 
+    private val ref = TrackRef.of(ytTrack)
+    /** L'écoute devient partagée en cours de route. */
+    private var sharedNow = false
+    private var clock = 0L
+
     private fun resolver(
         settings: fr.lulu.unison.source.ResolverSettings = fr.lulu.unison.source.ResolverSettings("s1"),
         shared: Boolean = false,
         allowDownloads: Boolean = true,
         present: Boolean = true,
-    ) = SourceResolver(youtube, { id -> if (id == "s1" && present) fr.lulu.unison.source.ImportedSource(addon, allowDownloads) else null }, { settings }, { shared })
+        background: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+        now: () -> Long = System::currentTimeMillis,
+    ) = SourceResolver(
+        youtube, { id -> if (id == "s1" && present) fr.lulu.unison.source.ImportedSource(addon, allowDownloads) else null },
+        { settings }, { shared || sharedNow }, now, background,
+    )
 
     @Test fun youtubeStaysTheDefault() = kotlinx.coroutines.runBlocking<Unit> {
         val info = resolver(fr.lulu.unison.source.ResolverSettings()).resolve(TrackRef.of(ytTrack))
@@ -168,18 +195,114 @@ class SourceResolverTest {
 
     @Test fun activeSourceServesTheSameRecording() = kotlinx.coroutines.runBlocking<Unit> {
         val r = resolver()
-        assertEquals("s1", r.resolve(TrackRef.of(ytTrack)).sourceId)
+        assertEquals("s1", r.upgrade(ref, StreamRequest.Best)?.sourceId)
         assertEquals(listOf("hr/1"), addon.streamed)
-        // Correspondance gardée : pas de nouvelle recherche.
-        r.resolve(TrackRef.of(ytTrack))
+        assertEquals("s1", r.resolve(ref.copy(via = "s1")).sourceId)
+        // Adresse expirée : le flux est redemandé, la correspondance gardée (pas de nouvelle recherche).
+        r.invalidate(ref.id)
+        assertNull(r.readySource(ref, StreamRequest.Best))
+        assertEquals("s1", r.resolve(ref.copy(via = "s1")).sourceId)
+        assertEquals(listOf("hr/1", "hr/1"), addon.streamed)
         assertEquals(1, addon.searches)
+    }
+
+    @Test fun playbackStartsOnYoutubeWithoutWaitingForTheSource() = kotlinx.coroutines.runBlocking<Unit> {
+        val r = resolver()
+        assertEquals(SourceIds.YOUTUBE, r.resolve(ref).sourceId)
+        assertEquals(0, addon.searches)
+        assertNull(r.readySource(ref, StreamRequest.Best))
+        assertEquals("s1", r.upgrade(ref, StreamRequest.Best)?.sourceId)
+        assertEquals("s1", r.readySource(ref, StreamRequest.Best))
+        // Un élément du lecteur qui ne désigne pas la source reste sur YouTube Music : rouvert, il garde son fichier.
+        assertEquals(SourceIds.YOUTUBE, r.resolve(ref).sourceId)
+        assertEquals("s1", r.resolve(ref.copy(via = "s1")).sourceId)
+        assertEquals(1, addon.searches)
+        assertEquals(listOf("hr/1"), addon.streamed)
+    }
+
+    @Test fun aSourceSlowerThanTheStartIsStillAwaitedInTheBackground() = runTest {
+        addon.slowMs = 9_000
+        val r = resolver(background = backgroundScope)
+        assertEquals(SourceIds.YOUTUBE, r.resolve(ref).sourceId)
+        assertEquals(0L, currentTime)
+        // Démarrage à froid : au-delà des 6 s laissées autrefois avant de lire, mais dans le temps de la recherche.
+        assertEquals("s1", r.upgrade(ref, StreamRequest.Best)?.sourceId)
+        assertEquals(9_000L, currentTime)
+        addon.slowMs = 60_000
+        val asleep = resolver(background = backgroundScope)
+        val started = currentTime
+        assertNull(asleep.upgrade(ref, StreamRequest.Best))
+        assertEquals(20_000L, currentTime - started)
+    }
+
+    @Test fun oneSearchPerTrackEvenWithoutAnyoneWaiting() = runTest {
+        addon.slowMs = 3_000
+        val r = resolver(background = backgroundScope)
+        // Préchargement de la file et lecture du même titre en même temps : une seule recherche.
+        val a = async { r.upgrade(ref, StreamRequest.Best) }
+        val b = async { r.upgrade(ref, StreamRequest.Best) }
+        assertEquals("s1", a.await()?.sourceId)
+        assertEquals("s1", b.await()?.sourceId)
+        assertEquals(1, addon.searches)
+        // Titre passé avant la réponse : la recherche va à son terme et sert au prochain passage.
+        val other = resolver(background = backgroundScope)
+        val skipped = launch { other.upgrade(ref, StreamRequest.Best) }
+        advanceTimeBy(1_000)
+        skipped.cancel()
+        advanceTimeBy(5_000)
+        assertEquals("s1", other.readySource(ref, StreamRequest.Best))
+        assertEquals(2, addon.searches)
+    }
+
+    @Test fun aFoundStreamIsNotOfferedCloseToItsExpiry() = kotlinx.coroutines.runBlocking<Unit> {
+        addon.expiresAt = 10 * 60_000L
+        val r = resolver(now = { clock })
+        r.upgrade(ref, StreamRequest.Best)
+        assertEquals("s1", r.readySource(ref, StreamRequest.Best))
+        clock = 9 * 60_000L
+        assertNull(r.readySource(ref, StreamRequest.Best))
+    }
+
+    @Test fun noHotSwapInSharedSessionsOrWithDataSaver() = kotlinx.coroutines.runBlocking<Unit> {
+        val shared = resolver(shared = true)
+        assertNull(shared.upgrade(ref, StreamRequest.Best))
+        assertNull(shared.readySource(ref, StreamRequest.Best))
+        assertEquals(SourceIds.YOUTUBE, shared.resolve(ref.copy(via = "s1")).sourceId)
+        val r = resolver()
+        assertNull(r.upgrade(ref, StreamRequest.Capped(96)))
+        assertNull(r.readySource(ref, StreamRequest.Capped(96)))
+        assertEquals(0, addon.searches)
+        // Trouvé seul, puis l'écoute devient partagée : plus aucune bascule, les nouveaux éléments restent sur YouTube Music…
+        r.upgrade(ref, StreamRequest.Best)
+        sharedNow = true
+        assertNull(r.readySource(ref, StreamRequest.Best))
+        assertNull(r.upgrade(ref, StreamRequest.Best))
+        assertEquals(SourceIds.YOUTUBE, r.resolve(ref).sourceId)
+        // … mais un élément déjà passé sur la source, rouvert avant que le lecteur ne le remplace, garde son fichier.
+        assertEquals("s1", r.resolve(ref.copy(via = "s1")).sourceId)
+    }
+
+    @Test fun withoutFallbackTheSourceIsAwaitedLonger() = runTest {
+        addon.slowMs = 9_000
+        val strict = resolver(ResolverSettings("s1", fallbackToYouTube = false), background = backgroundScope)
+        assertEquals("s1", strict.resolve(ref).sourceId)
+        assertEquals(9_000L, currentTime)
+    }
+
+    @Test fun sourceTracksHaveNothingToUpgrade() = kotlinx.coroutines.runBlocking<Unit> {
+        val srcRef = TrackRef.of(Track("src:s1::hr/1", "Sweet Dreams (Are Made of This)", "Eurythmics", durationMs = 216_500))
+        assertNull(resolver().upgrade(srcRef, StreamRequest.Best))
+        assertNull(resolver(ResolverSettings()).upgrade(ref, StreamRequest.Best))
+        assertEquals(0, addon.searches)
     }
 
     @Test fun fallsBackToYoutubeWhenMissingFailingOrSlow() = kotlinx.coroutines.runBlocking<Unit> {
         val other = Track("ytOther0002", "Autre", "X", durationMs = 100_000)
         assertEquals(SourceIds.YOUTUBE, resolver().resolve(TrackRef.of(other)).sourceId)
+        assertNull(resolver().upgrade(TrackRef.of(other), StreamRequest.Best))
         addon.fail = true
         assertEquals(SourceIds.YOUTUBE, resolver().resolve(TrackRef.of(ytTrack)).sourceId)
+        assertNull(resolver().upgrade(ref, StreamRequest.Best))
         addon.fail = false
         addon.slowMs = 60_000
         val started = System.currentTimeMillis()
@@ -202,7 +325,7 @@ class SourceResolverTest {
     @Test fun downloadsRespectTheSourcePolicy() = kotlinx.coroutines.runBlocking<Unit> {
         val r = resolver(allowDownloads = false)
         assertEquals(SourceIds.YOUTUBE, r.resolve(TrackRef.of(ytTrack), purpose = fr.lulu.unison.source.StreamResolver.Purpose.DOWNLOAD).sourceId)
-        assertEquals("s1", r.resolve(TrackRef.of(ytTrack)).sourceId)
+        assertEquals("s1", r.upgrade(ref, StreamRequest.Best)?.sourceId)
     }
 
     @Test fun sourceTracksPlayFromTheirSourceOrFromYoutube() = kotlinx.coroutines.runBlocking<Unit> {

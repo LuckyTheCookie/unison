@@ -11,6 +11,12 @@ data class TrackRef(
     val artist: String = "",
     val album: String = "",
     val durationMs: Long = 0,
+    /**
+     * Source importée imposée pour ce flux : la lecture y a basculé une fois le titre trouvé. Sans elle, un titre
+     * YouTube Music part sur YouTube Music sans attendre la source ; un même élément du lecteur garde ainsi le même
+     * fichier d'un bout à l'autre, même s'il est rouvert après coup (saut, nouvel essai).
+     */
+    val via: String? = null,
 ) {
     companion object {
         fun of(t: Track) = TrackRef(t.id, t.title, t.artist, t.album, t.durationMs)
@@ -19,7 +25,7 @@ data class TrackRef(
 
 /**
  * Adresse interne d'un titre, lue par la résolution au moment de lire ou de télécharger :
- * `unison://track?id=…&ti=…&ar=…&al=…&d=…`. Tout est encodé : un identifiant contenant « / », « ? » ou « :: »
+ * `unison://track?id=…&ti=…&ar=…&al=…&d=…&via=…`. Tout est encodé : un identifiant contenant « / », « ? » ou « :: »
  * (titres d'une source importée) ne peut pas casser l'adresse. L'ancienne forme `unison://track/<id>`,
  * gardée par les téléchargements en attente, reste comprise.
  */
@@ -35,6 +41,7 @@ object TrackUri {
         if (ref.artist.isNotEmpty()) append("&ar=").append(enc(ref.artist.take(MAX_TEXT)))
         if (ref.album.isNotEmpty()) append("&al=").append(enc(ref.album.take(MAX_TEXT)))
         if (ref.durationMs > 0) append("&d=").append(ref.durationMs)
+        if (ref.via != null) append("&via=").append(enc(ref.via))
     }
 
     /** Le titre désigné par [uri], ou null si ce n'est pas une adresse de titre. */
@@ -58,6 +65,7 @@ object TrackUri {
             artist = params["ar"].orEmpty(),
             album = params["al"].orEmpty(),
             durationMs = params["d"]?.toLongOrNull() ?: 0,
+            via = params["via"]?.takeIf { it.isNotEmpty() },
         )
     }
 
