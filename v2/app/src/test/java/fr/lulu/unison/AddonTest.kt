@@ -62,7 +62,7 @@ class AddonFormatTest {
         assertTrue(invalid("""{"category:rock":[{"url":"x.js"}]}""").contains("code distant"))
         assertTrue(invalid("<html>").isNotEmpty())
         // Authentification propre à une autre application : repérée pour être refusée, jamais reproduite.
-        assertTrue(manifest("""{"id":"a","bitchordAuth":1}""").proprietaryAuth)
+        assertTrue(manifest("""{"id":"a","bitchordAuth":0}""").proprietaryAuth)
     }
 
     @Test fun readsSearchRows() {
@@ -248,7 +248,7 @@ class ManifestSourceTest {
         val missing = ManifestSource.inspect(base, policy, http, guard, "Unison/test")
         assertTrue((missing as ManifestSource.Companion.InspectResult.Refused).reason.contains("manifest"))
 
-        server.enqueue(json("""{"id":"a","bitchordAuth":true}"""))
+        server.enqueue(json("""{"id":"a","bitchordAuth":false}"""))
         val auth = ManifestSource.inspect(base, policy, http, guard, "Unison/test")
         assertEquals(ManifestSource.NOT_COMPATIBLE, (auth as ManifestSource.Companion.InspectResult.Refused).reason)
 
