@@ -21,6 +21,7 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - **Its own player** (Media3 ExoPlayer): notification, lock screen, headset and Bluetooth controls, background playback, on-device audio cache.
 - **Gapless playback**: the next track is prepared while the current one plays, so changing track never cuts the sound.
 - **Swipe the artwork** to skip to the next track or go back to the previous one.
+- **Add to a playlist from the player**: a "+" button next to the heart adds the current track to a playlist (or a new one) in one tap.
 - **Smooth predictive back** for the player, the "Together" screen and navigation.
 - **Queue**: play next, add to queue, reorder, repeat, and an automatic radio that keeps the music going.
 - **Shuffle mode** you can switch on and off like repeat: switching it off puts the remaining tracks back in their original order. The state is shared in a session.

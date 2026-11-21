@@ -199,6 +199,11 @@ fun PlayerScreen(vm: AppViewModel, page: PlayerPage, onPage: (PlayerPage) -> Uni
                             Text(track.artist, style = Type.PlayerArtist, color = Ink.Secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
+                    // « + » : ajouter le titre en cours à une playlist, sans passer par le menu.
+                    var picking by remember { mutableStateOf(false) }
+                    if (picking) PlaylistPicker(listOf(track), vm, onDismiss = { picking = false })
+                    IconBtn(R.drawable.ic_add_line, "Ajouter à une playlist", { picking = true }, background = Ink.FillHover)
+                    Spacer(Modifier.width(10.dp))
                     val fav = track.id in favorites
                     IconBtn(
                         if (fav) R.drawable.ic_heart_fill else R.drawable.ic_heart_line, "Favori", { vm.toggleFavorite(track) },
