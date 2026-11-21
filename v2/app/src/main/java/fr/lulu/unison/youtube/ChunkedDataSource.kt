@@ -16,10 +16,22 @@ import kotlin.math.min
  * La taille réelle du fichier est lue dans l'en-tête Content-Range de la première réponse : [open] renvoie
  * la même longueur qu'une requête ordinaire, et aucune requête ne demande d'octet au-delà de la fin.
  */
-class ChunkedDataSource(private val upstream: DataSource, private val chunkBytes: Long = DEFAULT_CHUNK_BYTES) : DataSource {
-    class Factory(private val upstream: DataSource.Factory, private val chunkBytes: Long = DEFAULT_CHUNK_BYTES) : DataSource.Factory {
-        override fun createDataSource(): DataSource = ChunkedDataSource(upstream.createDataSource(), chunkBytes)
+class ChunkedDataSource(
+    private val upstream: DataSource,
+    private val chunkBytes: Long = DEFAULT_CHUNK_BYTES,
+    /** Adresses à découper ; les autres passent telles quelles, en une seule requête. */
+    private val chunked: (Uri) -> Boolean = { true },
+) : DataSource {
+    class Factory(
+        private val upstream: DataSource.Factory,
+        private val chunkBytes: Long = DEFAULT_CHUNK_BYTES,
+        private val chunked: (Uri) -> Boolean = { true },
+    ) : DataSource.Factory {
+        override fun createDataSource(): DataSource = ChunkedDataSource(upstream.createDataSource(), chunkBytes, chunked)
     }
+
+    /** Requête en cours transmise telle quelle (adresse qui n'est pas à découper). */
+    private var direct = false
 
     private var spec: DataSpec? = null
     /** Position absolue du prochain octet à lire. */
@@ -35,6 +47,8 @@ class ChunkedDataSource(private val upstream: DataSource, private val chunkBytes
     override fun open(dataSpec: DataSpec): Long {
         spec = dataSpec
         position = dataSpec.position
+        direct = !chunked(dataSpec.uri)
+        if (direct) return upstream.open(dataSpec)
         // Déjà bornée et courte : rien à découper.
         if (dataSpec.length != C.LENGTH_UNSET.toLong() && dataSpec.length <= chunkBytes) {
             end = dataSpec.position + dataSpec.length
@@ -68,6 +82,7 @@ class ChunkedDataSource(private val upstream: DataSource, private val chunkBytes
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         if (length == 0) return 0
+        if (direct) return upstream.read(buffer, offset, length)
         while (true) {
             val left = if (end == C.LENGTH_UNSET.toLong()) Long.MAX_VALUE else end - position
             if (left <= 0) return C.RESULT_END_OF_INPUT
@@ -96,5 +111,11 @@ class ChunkedDataSource(private val upstream: DataSource, private val chunkBytes
     companion object {
         /** 10 Mo par requête : un titre entier tient d'ordinaire en une seule. */
         const val DEFAULT_CHUNK_BYTES = 10L * 1024 * 1024
+
+        /**
+         * Seul YouTube bride les requêtes sans fin : les flux des sources importées sont lus d'une traite. Les
+         * découper multiplierait les requêtes vers leur serveur, qui finit par répondre 429 au milieu du titre.
+         */
+        fun isYouTube(uri: Uri): Boolean = uri.host?.lowercase()?.let { it == "googlevideo.com" || it.endsWith(".googlevideo.com") } == true
     }
 }

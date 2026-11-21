@@ -45,6 +45,15 @@ object TrackMatcher {
         return normalize(t)
     }
 
+    /** Titre à chercher : sans parenthèses, crochets, « feat. » ni suffixe « - … », casse et accents gardés. */
+    fun baseTitle(title: String): String {
+        val t = title.replace(BRACKETS, " ").replace(FEAT, " ")
+        return t.substringBefore(" - ").ifBlank { t }.trim().replace(SPACES, " ")
+    }
+
+    /** Premier artiste d'une liste (« Jul, SCH & Naps » → « Jul »). */
+    fun mainArtist(raw: String): String = raw.split(ARTIST_SEP).firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+
     /** Mots qui désignent une autre version du morceau, où qu'ils soient dans le titre. */
     fun versionWords(title: String): Set<String> {
         val words = normalize(title).split(' ').filter { it.isNotEmpty() }

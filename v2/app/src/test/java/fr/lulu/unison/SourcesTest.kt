@@ -322,6 +322,61 @@ class SourceResolverTest {
         assertEquals(0, addon.searches)
     }
 
+    @Test fun aSourceFileThatFailsFallsBackToYoutube() = kotlinx.coroutines.runBlocking<Unit> {
+        val r = resolver(now = { clock })
+        assertEquals("s1", r.upgrade(ref, StreamRequest.Best)?.sourceId)
+        assertEquals("s1", r.resolve(ref.copy(via = "s1")).sourceId)
+        // Le serveur audio refuse le fichier en cours de titre : l'élément, rouvert, repart sur YouTube Music.
+        assertTrue(r.reject(ref.id, httpCode = 404))
+        assertNull(r.readySource(ref, StreamRequest.Best))
+        assertNull(r.upgrade(ref, StreamRequest.Best))
+        assertEquals(SourceIds.YOUTUBE, r.resolve(ref.copy(via = "s1")).sourceId)
+        // Déjà sur YouTube Music : rien de plus à écarter, pas de boucle.
+        assertFalse(r.reject(ref.id))
+        // Plus tard, la source est de nouveau essayée.
+        clock += 16 * 60_000L
+        assertEquals("s1", r.upgrade(ref, StreamRequest.Best)?.sourceId)
+    }
+
+    @Test fun aThrottledSourceIsLeftAloneForAWhile() = kotlinx.coroutines.runBlocking<Unit> {
+        val r = resolver(now = { clock })
+        val src = TrackRef.of(Track("src:s1::hr/1", "Sweet Dreams (Are Made of This)", "Eurythmics", durationMs = 216_500))
+        assertEquals("s1", r.resolve(src).sourceId)
+        // 429 du serveur audio : toute la source est mise en pause, ses titres se lisent sur YouTube Music.
+        assertTrue(r.reject(src.id, httpCode = 429))
+        val streamed = addon.streamed.size
+        assertEquals(SourceIds.YOUTUBE, r.resolve(src).sourceId)
+        assertNull(r.upgrade(ref, StreamRequest.Best))
+        assertEquals(streamed, addon.streamed.size)
+        assertEquals(0, addon.searches)
+        clock += 4 * 60_000L
+        assertEquals("s1", r.upgrade(ref, StreamRequest.Best)?.sourceId)
+    }
+
+    @Test fun withoutFallbackARejectedSourceIsStillUsed() = kotlinx.coroutines.runBlocking<Unit> {
+        val strict = resolver(ResolverSettings("s1", fallbackToYouTube = false), now = { clock })
+        assertEquals("s1", strict.resolve(ref).sourceId)
+        assertFalse(strict.reject(ref.id, httpCode = 429))
+        assertEquals("s1", strict.resolve(ref).sourceId)
+    }
+
+    @Test fun aSecondQueryFindsWhatTheFirstMissed() = kotlinx.coroutines.runBlocking<Unit> {
+        val queen = Track("ytQueen0001", "Bohemian Rhapsody (Remastered 2011)", "Queen", durationMs = 355_000)
+        val picky = object : fr.lulu.unison.source.MusicSource by addon {
+            val queries = mutableListOf<String>()
+            override suspend fun search(query: String, limit: Int): List<Track> {
+                queries += query
+                return if (query == "Queen Bohemian Rhapsody") listOf(Track("src:s2::q/1", "Bohemian Rhapsody - Remastered 2011", "Queen", durationMs = 354_000)) else emptyList()
+            }
+            override suspend fun stream(trackId: String, request: StreamRequest) =
+                StreamInfo(url = "https://cdn.example.test/$trackId", expiresAtMs = Long.MAX_VALUE, sourceId = "s2", cacheKey = "s2:$trackId")
+            override val id = "s2"
+        }
+        val r = SourceResolver(youtube, { id -> if (id == "s2") fr.lulu.unison.source.ImportedSource(picky, true) else null }, { ResolverSettings("s2") })
+        assertEquals("s2", r.upgrade(TrackRef.of(queen), StreamRequest.Best)?.sourceId)
+        assertEquals(listOf("Bohemian Rhapsody (Remastered 2011) Queen", "Queen Bohemian Rhapsody"), picky.queries)
+    }
+
     @Test fun downloadsRespectTheSourcePolicy() = kotlinx.coroutines.runBlocking<Unit> {
         val r = resolver(allowDownloads = false)
         assertEquals(SourceIds.YOUTUBE, r.resolve(TrackRef.of(ytTrack), purpose = fr.lulu.unison.source.StreamResolver.Purpose.DOWNLOAD).sourceId)

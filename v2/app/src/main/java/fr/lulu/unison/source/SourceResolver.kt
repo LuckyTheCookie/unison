@@ -1,6 +1,7 @@
 package fr.lulu.unison.source
 
 import android.util.Log
+import fr.lulu.unison.model.Track
 import fr.lulu.unison.youtube.Quality
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +30,14 @@ interface StreamResolver {
 
     /** Source importée dont le flux de [ref] est déjà connu : un [TrackRef.via] qui la désigne se lit sans attente. */
     fun readySource(ref: TrackRef, request: StreamRequest): String? = null
+
+    /**
+     * Le flux de [id] venu d'une source importée ([sourceId], ou celle qui a servi le dernier flux) ne se lit pas :
+     * réponse HTTP [httpCode] du serveur audio, ou autre panne. Le titre ne lui est plus demandé pendant un moment
+     * (toute la source après une 429 ou une 5xx) et se lit sur YouTube Music si le repli est permis.
+     * Vrai quand la prochaine résolution de [id] ira donc ailleurs.
+     */
+    fun reject(id: String, sourceId: String? = null, httpCode: Int? = null): Boolean = false
 
     enum class Purpose { PLAY, DOWNLOAD }
 }
@@ -77,6 +86,10 @@ class SourceResolver(
     /** Flux de la source importée déjà trouvés, par titre YouTube Music. */
     private val found = ConcurrentHashMap<String, Found>()
     private val pending = ConcurrentHashMap<String, Deferred<Found?>>()
+    /** « source|titre » dont le flux a échoué à la lecture → fin de la mise à l'écart. */
+    private val rejected = ConcurrentHashMap<String, Long>()
+    /** Source dont le serveur audio est saturé (429, 5xx) → fin de la pause. */
+    private val cooling = ConcurrentHashMap<String, Long>()
 
     override suspend fun resolve(ref: TrackRef, request: StreamRequest, purpose: StreamResolver.Purpose): StreamInfo {
         val s = settings()
@@ -91,7 +104,8 @@ class SourceResolver(
                 attempt(budget) { matchIn(youtube, SourceIds.YOUTUBE, ref, budget)?.let { id -> youtube.stream(id, request)?.let { id to it } } }
                     ?.let { (id, info) -> return served(ref.id, youtube, id, info) }
             }
-            if (imp != null && (purpose == StreamResolver.Purpose.PLAY || imp.allowDownloads)) {
+            val skip = s.fallbackToYouTube && unusable(configId, ref.id)
+            if (imp != null && !skip && (purpose == StreamResolver.Purpose.PLAY || imp.allowDownloads)) {
                 attempt(budget) { imp.source.stream(trackId, request) }?.let { return served(ref.id, imp.source, trackId, it) }
             }
             if (!s.fallbackToYouTube && imp != null) throw StreamUnavailableException("Titre indisponible dans la source")
@@ -103,7 +117,8 @@ class SourceResolver(
         // Élément du lecteur déjà passé sur la source : rouvert (saut, nouvel essai), il en garde le fichier, même si
         // l'écoute est devenue partagée ou l'économie de données activée entre-temps.
         if (ref.via != null && purpose == StreamResolver.Purpose.PLAY) {
-            found[ref.id]?.takeIf { it.source.id == ref.via && fresh(it) }?.let { return served(ref.id, it.source, it.trackId, it.info) }
+            found[ref.id]?.takeIf { it.source.id == ref.via && fresh(it) && !unusable(it.source.id, ref.id) }
+                ?.let { return served(ref.id, it.source, it.trackId, it.info) }
         }
         val imp = substituteFor(ref, request)?.takeIf { purpose == StreamResolver.Purpose.PLAY || it.allowDownloads }
         if (imp != null) {
@@ -128,10 +143,41 @@ class SourceResolver(
     override fun readySource(ref: TrackRef, request: StreamRequest): String? =
         substituteFor(ref, request)?.let { known(it.source, ref) }?.source?.id
 
+    override fun reject(id: String, sourceId: String?, httpCode: Int?): Boolean {
+        val last = served[id]
+        val src = sourceId ?: last?.first?.takeIf { it !== youtube }?.id ?: return false
+        if (src == SourceIds.YOUTUBE) return false
+        val t = now()
+        rejected["$src|$id"] = t + REJECT_MS
+        if (rejected.size > MAX_MATCHES) rejected.entries.removeIf { it.value <= t }
+        if (httpCode == 429 || (httpCode != null && httpCode in 500..599)) {
+            cooling[src] = t + COOLDOWN_MS
+            Log.i(TAG, "serveur audio de la source $src saturé ($httpCode) : pause de ${COOLDOWN_MS / 1000} s")
+        } else {
+            Log.i(TAG, "flux de la source $src illisible${httpCode?.let { " ($it)" }.orEmpty()} : titre écarté")
+        }
+        found.remove(id)
+        if (last != null && last.first.id == src) {
+            served.remove(id)
+            last.first.invalidate(last.second)
+        }
+        return settings().fallbackToYouTube
+    }
+
+    /** La source [sourceId] ne doit pas servir [id] pour l'instant (flux déjà en échec, ou serveur saturé). */
+    private fun unusable(sourceId: String, id: String): Boolean {
+        val t = now()
+        return (rejected["$sourceId|$id"] ?: 0L) > t || (cooling[sourceId] ?: 0L) > t
+    }
+
     /** Source importée qui peut jouer à la place de YouTube Music le titre YouTube [ref], ou null. */
     private fun substituteFor(ref: TrackRef, request: StreamRequest): ImportedSource? {
         if (SourceTrackId.parse(ref.id) != null || shared() || request != StreamRequest.Best) return null
-        return settings().activeSource.takeIf { it != SourceIds.YOUTUBE }?.let(imported)
+        val s = settings()
+        val id = s.activeSource.takeIf { it != SourceIds.YOUTUBE } ?: return null
+        // Sans repli, c'est la source ou rien : elle reste demandée même après un échec.
+        if (s.fallbackToYouTube && unusable(id, ref.id)) return null
+        return imported(id)
     }
 
     /**
@@ -163,6 +209,8 @@ class SourceResolver(
     private fun fresh(f: Found) = f.info.expiresAtMs - EXPIRY_MARGIN_MS > now()
 
     private fun remember(id: String, f: Found) {
+        // Recherche lancée avant un échec de lecture : son résultat ne doit pas faire revenir sur la source.
+        if (unusable(f.source.id, id)) return
         found[id] = f
         if (found.size > MAX_FOUND) found.entries.removeIf { !fresh(it.value) }
         Log.d(TAG, "titre trouvé dans la source ${f.source.id}")
@@ -192,10 +240,22 @@ class SourceResolver(
         if (ref.title.isBlank()) return null
         val key = "$sourceId|${ref.id}"
         matches[key]?.takeIf { it.until > now() }?.let { return it.trackId }
-        val query = listOf(ref.title, ref.artist).filter { it.isNotBlank() }.joinToString(" ")
-        val results = attempt(budgetMs) { source.search(query, SEARCH_LIMIT) } ?: return null
         val target = TrackMatcher.Candidate(ref.title, ref.artist, ref.durationMs)
-        val best = TrackMatcher.best(target, results) { TrackMatcher.Candidate(it.title, it.artist, it.durationMs) }
+        // Les moteurs de recherche des sources sont sensibles à la forme de la requête (« Bohemian Rhapsody Queen »
+        // ne trouve pas Queen, « Queen Bohemian Rhapsody » oui) : à défaut, l'artiste principal puis le titre seul.
+        val queries = listOf(
+            listOf(ref.title, ref.artist).filter { it.isNotBlank() }.joinToString(" "),
+            listOf(TrackMatcher.mainArtist(ref.artist), TrackMatcher.baseTitle(ref.title)).filter { it.isNotBlank() }.joinToString(" "),
+        ).distinctBy { it.lowercase() }
+        val deadline = now() + budgetMs
+        var best: Track? = null
+        for (query in queries) {
+            val left = deadline - now()
+            if (left <= 0) break
+            val results = attempt(left) { source.search(query, SEARCH_LIMIT) } ?: return null
+            best = TrackMatcher.best(target, results) { TrackMatcher.Candidate(it.title, it.artist, it.durationMs) }
+            if (best != null) break
+        }
         val trackId = best?.id?.let { SourceTrackId.parse(it)?.second ?: it }
         matches[key] = Match(trackId, now() + if (trackId != null) HIT_TTL_MS else MISS_TTL_MS)
         if (matches.size > MAX_MATCHES) matches.entries.removeIf { it.value.until <= now() }
@@ -226,6 +286,10 @@ class SourceResolver(
         const val HIT_TTL_MS = 24 * 3_600_000L
         const val MISS_TTL_MS = 30 * 60_000L
         const val MAX_MATCHES = 1_000
+        /** Un titre dont le flux de la source a échoué se lit ailleurs pendant ce temps. */
+        const val REJECT_MS = 15 * 60_000L
+        /** Pause d'une source dont le serveur audio répond 429 ou 5xx : il n'est plus sollicité. */
+        const val COOLDOWN_MS = 3 * 60_000L
     }
 }
 

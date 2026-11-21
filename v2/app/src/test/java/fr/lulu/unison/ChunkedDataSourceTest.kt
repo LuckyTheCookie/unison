@@ -96,6 +96,15 @@ class ChunkedDataSourceTest {
         assertEquals(listOf(0L to 100L), s3.requests)
     }
 
+    @Test fun addressesNotToSplitAreReadInOneRequest() {
+        // Flux d'une source importée : une seule requête, pour ne pas faire répondre 429 à son serveur.
+        val server = FakeServer(file)
+        val (length, bytes) = readAll(ChunkedDataSource(server, chunkBytes = 10_000, chunked = { false }), spec())
+        assertEquals(25_000L, length)
+        assertArrayEquals(file, bytes)
+        assertEquals(listOf(0L to C.LENGTH_UNSET.toLong()), server.requests)
+    }
+
     @Test fun unknownSizeStopsAtTheFirstShortAnswer() {
         val server = FakeServer(file, announceSize = false)
         val (length, bytes) = readAll(ChunkedDataSource(server, chunkBytes = 10_000), spec())

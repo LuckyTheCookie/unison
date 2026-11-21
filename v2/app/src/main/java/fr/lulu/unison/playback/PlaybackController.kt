@@ -16,6 +16,7 @@ import androidx.media3.exoplayer.DecoderReuseEvaluation
 import fr.lulu.unison.source.DecodedFormat
 import fr.lulu.unison.source.QualityLabel
 import fr.lulu.unison.source.QualityTier
+import fr.lulu.unison.source.SourceIds
 import fr.lulu.unison.source.StreamInfo
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
@@ -408,7 +409,12 @@ class PlaybackController(
         Log.i(TAG, "bascule vers la source ${stream.sourceId}")
         _state.update { it.copy(upgrading = true) }
         // En-têtes et début du fichier déjà là : la bascule n'attend plus que les données à la position courante.
-        warm(stream)
+        // Un serveur audio qui ne le sert pas (429, 403…) ne doit pas interrompre ce qui joue : on reste sur YouTube.
+        warm(stream)?.let { failure ->
+            streams.reject(item.track.id, stream.sourceId, httpCodeOf(failure))
+            _state.update { it.copy(upgrading = false) }
+            return
+        }
         if (!allowed()) { _state.update { it.copy(upgrading = false) }; return }
         declare(item.track.id, stream)
         reload(item)
@@ -518,13 +524,20 @@ class PlaybackController(
             prefetchedUid = next.uid
             // La session a pu bouger pendant la résolution : on repart de son état actuel.
             if (loaded != null) prepareNext(Gapless.upcoming(sessions.snapshot.value))
-            warm(stream)
+            val failure = warm(stream) ?: return@launch
+            // Fichier de la source refusé par son serveur : le suivant est préparé à nouveau, depuis YouTube Music.
+            if (stream.sourceId != SourceIds.YOUTUBE && streams.reject(id, stream.sourceId, httpCodeOf(failure))) {
+                declared.remove(id)
+                prefetchedUid = null
+                prefetchingUid = null
+                scope.launch { if (loaded != null) prepareNext(Gapless.upcoming(sessions.snapshot.value)) }
+            }
         }
     }
 
-    /** Met en cache le début du fichier de [stream], sans le lire. */
-    private suspend fun warm(stream: StreamInfo) {
-        try {
+    /** Met en cache le début du fichier de [stream], sans le lire. L'erreur rencontrée, ou null si tout va bien. */
+    private suspend fun warm(stream: StreamInfo): Exception? {
+        return try {
             runInterruptible(Dispatchers.IO) {
                 val spec = DataSpec.Builder()
                     .setUri(Uri.parse(stream.url))
@@ -534,12 +547,18 @@ class PlaybackController(
                     .build()
                 CacheWriter(cacheFactory.createDataSource(), spec, null, null).cache()
             }
+            null
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.d(TAG, "pré-chargement interrompu (${e::class.simpleName})")
+            Log.d(TAG, "pré-chargement interrompu (${e::class.simpleName}${httpCodeOf(e)?.let { ", $it" }.orEmpty()})")
+            e
         }
     }
+
+    /** Code HTTP de la réponse refusée qui a causé [e], s'il y en a une. */
+    private fun httpCodeOf(e: Throwable): Int? =
+        generateSequence(e) { it.cause }.firstNotNullOfOrNull { (it as? HttpDataSource.InvalidResponseCodeException)?.responseCode }
 
     /** Aligne lecture/pause et position sur l'ancre. */
     private fun follow(a: PlayAnchor, shared: Boolean, anchorChanged: Boolean) {
@@ -683,7 +702,7 @@ class PlaybackController(
         CacheDataSource.Factory()
             .setCache(cache)
             // Requêtes bornées : YouTube sert alors à pleine vitesse (le suivant et les sauts se chargent d'un coup).
-            .setUpstreamDataSourceFactory(ChunkedDataSource.Factory(OkHttpDataSource.Factory(okHttp)))
+            .setUpstreamDataSourceFactory(ChunkedDataSource.Factory(OkHttpDataSource.Factory(okHttp), chunked = ChunkedDataSource::isYouTube))
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }
 
@@ -801,6 +820,17 @@ class PlaybackController(
                 if (s.anchor.item?.uid != item.uid || !skipIfOffline(s, item)) {
                     _state.update { it.copy(error = OFFLINE_MISSING, buffering = false) }
                 }
+                return
+            }
+            // Flux d'une source importée refusé par son serveur (429 en cours de titre, adresse expirée…) : le titre
+            // repart, à la même position, sur YouTube Music. Le même fichier n'est pas redemandé, ni le titre sauté.
+            if (!unavailable && !downloads.isComplete(item.track.id) &&
+                streams.reject(item.track.id, httpCode = causes.firstNotNullOfOrNull { (it as? HttpDataSource.InvalidResponseCodeException)?.responseCode })
+            ) {
+                Log.i(TAG, "source illisible, repli sur YouTube Music")
+                declared.remove(item.track.id)
+                decoded.remove(item.uid)
+                scope.launch { if (loaded?.uid == item.uid) { exo.prepare(); updateQuality() } }
                 return
             }
             if (!unavailable && retries < MAX_RETRIES) {

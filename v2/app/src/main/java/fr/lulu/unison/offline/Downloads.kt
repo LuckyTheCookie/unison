@@ -111,7 +111,7 @@ class Downloads(
         context, databaseProvider, cache,
         // L'adresse du flux est demandée au moment de télécharger ; la clé de cache reste celle du titre.
         // Requêtes bornées : sans fin annoncée, YouTube bride le téléchargement au débit de lecture.
-        ResolvingDataSource.Factory(ChunkedDataSource.Factory(OkHttpDataSource.Factory(http))) { spec ->
+        ResolvingDataSource.Factory(ChunkedDataSource.Factory(OkHttpDataSource.Factory(http), chunked = ChunkedDataSource::isYouTube)) { spec ->
             if (spec.uri.scheme != TrackUri.SCHEME) return@Factory spec
             val ref = TrackUri.parse(spec.uri.toString()) ?: return@Factory spec
             val id = ref.id
