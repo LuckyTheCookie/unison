@@ -26,6 +26,8 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - **Queue**: play next (or swipe a track to the right), add to queue, reorder, repeat, and an automatic radio that keeps the music going.
 - **Shuffle mode** you can switch on and off like repeat: switching it off puts the remaining tracks back in their original order. The state is shared in a session.
 - **Bass Booster** (Settings > Playback): five levels, applied on the phone with a bass shelf filter and a limiter, so it works on every device and on downloaded tracks.
+- **A home made for you**: shortcut tiles (Mix, most played, favourites, downloads, playlists, albums), "Listen again", "For you" picks drawn from what you play most, your artists. Generic YouTube Music suggestions come last.
+- **Mix and library search**: one tap plays a shuffle of your favourites, playlists, saved albums and downloads; search finds any track in your library.
 - **Library on the phone**: favourites, playlists, saved albums, followed artists and listening history. It follows you to a new phone through Android backup and device transfer (downloads, caches and imported sources stay on the old one).
 
 ### 🔌 Audio sources
@@ -37,7 +39,8 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - A **quality label** under the track ("Sans perte", "Haute résolution", "Haute qualité", Dolby Atmos) is read from the format that is really decoded and hidden when it is standard.
 
 ### 🎤 Word-by-word lyrics
-- Synced lyrics from [LRCLIB](https://lrclib.net) and NetEase. When the source gives word timings, each word (each character for CJK) lights up as it is sung.
+- Word-synced lyrics from Apple Music (through [BetterLyrics](https://better-lyrics.boidu.dev) and LyricsPlus), NetEase and [LRCLIB](https://lrclib.net), all asked at once: the most precise answer wins. YouTube titles are cleaned first ("Official MV", "Radio Edit", "Artist - Title"…).
+- Each word lights up as it is sung with a soft edge, lifts slightly, and long notes glow. A playhead that advances every frame keeps the fill smooth. Far lines are blurred, and dots breathe through intros and instrumental breaks.
 - Without word timings, the time of each line is spread over its characters, so the karaoke effect is always there.
 - Tap a line to jump to it. Lyrics of downloaded tracks work offline.
 - A one-line **lyrics strip** above the seek bar follows the song on the artwork page; tap it to open the full lyrics. A new setting reduces animations.
