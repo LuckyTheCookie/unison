@@ -29,3 +29,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Unison"
 include(":app")
+include(":baselineprofile")

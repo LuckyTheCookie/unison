@@ -23,6 +23,7 @@ import fr.lulu.unison.source.SourceResolver
 import fr.lulu.unison.source.YouTubeSource
 import fr.lulu.unison.ui.kawarp.KawarpBlur
 import fr.lulu.unison.update.UpdateManager
+import fr.lulu.unison.youtube.HomeCache
 import fr.lulu.unison.youtube.MusicCatalog
 import fr.lulu.unison.youtube.YouTubeCatalog
 import fr.lulu.unison.youtube.YouTubeEngine
@@ -34,6 +35,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -55,8 +57,10 @@ class AppGraph(app: Application) {
         region = Locale.getDefault().country.ifBlank { "FR" },
         language = Locale.getDefault().language.ifBlank { "fr" },
         quality = { settings.value.quality },
+        cacheDir = File(app.cacheDir, "innertube"),
     )
     val catalog: MusicCatalog = YouTubeCatalog(youtube)
+    val homeCache = HomeCache(File(app.cacheDir, "home.json"))
     /** Sources importées par l'utilisateur (aucune par défaut). */
     val sources = SourceRepository(File(app.filesDir, "sources.json"))
     /** Garde des flux des sources importées, posée sur le client HTTP du lecteur et des téléchargements. */
@@ -86,6 +90,12 @@ class AppGraph(app: Application) {
     fun start() {
         // Fond par défaut de l'écran, calculé ici plutôt que pendant la première image.
         scope.launch(Dispatchers.Default) { KawarpBlur.placeholderBitmap }
+        // Lecteur YouTube préparé en tâche de fond, après la première image : le premier titre part plus vite.
+        scope.launch {
+            delay(WARM_UP_DELAY_MS)
+            connectivity.online.first { it }
+            youtube.warmUp()
+        }
         downloads.start()
         playback.start()
         autoQueue.start()
@@ -104,6 +114,7 @@ class AppGraph(app: Application) {
     private companion object {
         /** Temps passé sur un titre avant qu'il compte comme écouté. */
         const val HISTORY_DELAY_MS = 2_000L
+        const val WARM_UP_DELAY_MS = 1_500L
     }
 }
 

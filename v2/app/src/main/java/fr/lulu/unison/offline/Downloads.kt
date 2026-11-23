@@ -105,6 +105,9 @@ class Downloads(
     private val completed = ConcurrentHashMap.newKeySet<String>()
     private val loudness = ConcurrentHashMap<String, Double>()
     private val loaded = CompletableDeferred<Unit>()
+    private val _ready = MutableStateFlow(false)
+    /** Vrai une fois la liste des titres téléchargés lue depuis la base (au démarrage, hors du fil principal). */
+    val ready: StateFlow<Boolean> = _ready.asStateFlow()
     private val retried = HashSet<String>()
 
     val manager: DownloadManager = DownloadManager(
@@ -151,6 +154,7 @@ class Downloads(
                 if (row.track.cover.isNotBlank() && art.exists()) OfflineArt.put(row.track.cover, art)
             }
             loaded.complete(Unit)
+            _ready.value = true
         }
         manager.addListener(object : DownloadManager.Listener {
             override fun onDownloadChanged(manager: DownloadManager, download: Download, finalException: Exception?) = changed(download)
@@ -179,8 +183,14 @@ class Downloads(
         }
     }
 
-    /** Le titre est entièrement sur le téléphone : la lecture n'a pas besoin du réseau. */
-    fun isComplete(id: String): Boolean {
+    /**
+     * Le titre est entièrement sur le téléphone : la lecture n'a pas besoin du réseau. Ne bloque jamais :
+     * tant que la liste n'est pas lue ([ready] à faux), répond non ; le lecteur revoit sa décision ensuite.
+     */
+    fun isComplete(id: String): Boolean = id in completed
+
+    /** Comme [isComplete], en attendant la liste si besoin : pour les fils de chargement, jamais le fil principal. */
+    fun awaitComplete(id: String): Boolean {
         if (!loaded.isCompleted) runBlocking { loaded.await() }
         return id in completed
     }

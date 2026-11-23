@@ -1,12 +1,15 @@
 package fr.lulu.unison.youtube
 
 import fr.lulu.unison.model.Track
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /** Un élément du catalogue : titre, album, artiste ou playlist. */
+@Serializable
 sealed interface YtItem {
     val key: String
     val title: String
@@ -14,6 +17,8 @@ sealed interface YtItem {
     val thumbnail: String
 }
 
+@Serializable
+@SerialName("song")
 data class SongItem(val track: Track) : YtItem {
     override val key get() = "s:${track.id}"
     override val title get() = track.title
@@ -21,6 +26,8 @@ data class SongItem(val track: Track) : YtItem {
     override val thumbnail get() = track.cover
 }
 
+@Serializable
+@SerialName("album")
 data class AlbumItem(
     val browseId: String,
     override val title: String,
@@ -30,6 +37,8 @@ data class AlbumItem(
     override val key get() = "a:$browseId"
 }
 
+@Serializable
+@SerialName("artist")
 data class ArtistItem(
     val browseId: String,
     override val title: String,
@@ -39,6 +48,8 @@ data class ArtistItem(
     override val key get() = "r:$browseId"
 }
 
+@Serializable
+@SerialName("playlist")
 data class PlaylistItem(
     val browseId: String,
     override val title: String,
@@ -49,8 +60,10 @@ data class PlaylistItem(
 }
 
 /** Lien « Tout voir » d'une section. */
+@Serializable
 data class BrowseRef(val browseId: String, val params: String?, val pageType: String)
 
+@Serializable
 data class Section(val title: String, val items: List<YtItem>, val more: BrowseRef? = null)
 
 /** Page d'un album ou d'une playlist. */

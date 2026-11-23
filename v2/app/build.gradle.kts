@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.baselineprofile)
 }
 
 // La clé de signature est celle de la v1, rangée à la racine du dépôt (jamais versionnée).
@@ -87,6 +88,13 @@ android {
     }
 }
 
+baselineProfile {
+    // Le profil est généré à la main (téléphone branché) puis versionné dans src/release/generated.
+    automaticGenerationDuringBuild = false
+    saveInSrc = true
+    dexLayoutOptimization = true
+}
+
 // Schémas de la base exportés (et versionnés) : ils servent à vérifier les migrations.
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
@@ -148,6 +156,10 @@ dependencies {
 
     implementation(libs.backdrop)
     implementation(libs.reorderable)
+
+    // Profil de référence : le code des parcours courants est compilé à l'installation, pas au premier usage.
+    implementation(libs.androidx.profileinstaller)
+    baselineProfile(project(":baselineprofile"))
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

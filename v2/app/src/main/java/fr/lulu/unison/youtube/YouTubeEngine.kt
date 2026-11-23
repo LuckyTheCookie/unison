@@ -24,7 +24,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import android.util.Log
 import okhttp3.OkHttpClient
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /** Un flux audio prêt à être lu. L'URL est signée et temporaire : ne jamais la journaliser. */
@@ -54,6 +56,8 @@ class YouTubeEngine(
     language: String = "fr",
     private val quality: () -> Quality = { Quality.HIGH },
     private val nowMs: () -> Long = System::currentTimeMillis,
+    /** Dossier où garder le lecteur YouTube déjà préparé d'un lancement à l'autre ; null : rien n'est gardé. */
+    private val cacheDir: File? = null,
 ) {
     private val http = HttpClient(OkHttp) {
         engine { preconfigured = okHttp }
@@ -92,7 +96,36 @@ class YouTubeEngine(
         streams.remove(videoId)
     }
 
+    private val cachesLock = Mutex()
+    @Volatile private var cachesSet = false
+
+    /**
+     * Branche le cache disque d'InnerTubeX pour l'amorçage du lecteur YouTube : sans lui, le premier titre de
+     * chaque lancement redemande tout au lecteur YouTube avant de pouvoir partir.
+     */
+    private suspend fun ensureCaches() {
+        val dir = cacheDir ?: return
+        if (cachesSet) return
+        cachesLock.withLock {
+            if (cachesSet) return
+            runCatching {
+                dir.mkdirs()
+                val bootstrap = File(dir, "player-bootstrap.json")
+                extractor.setPlayerBootstrapCache({ bootstrap.readOrNull() }, { bootstrap.writeAtomically(it) })
+            }.onFailure { Log.w(TAG, "cache du lecteur YouTube", it) }
+            cachesSet = true
+        }
+    }
+
+    /** Prépare l'extraction avant le premier titre (lecteur YouTube, chiffrement), en tâche de fond. */
+    suspend fun warmUp() = withContext(Dispatchers.IO) {
+        ensureCaches()
+        runCatching { extractor.prewarm() }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; Log.w(TAG, "préchauffage", it) }
+        Unit
+    }
+
     private suspend fun extract(videoId: String): ResolvedStream = withContext(Dispatchers.IO) {
+        ensureCaches()
         // Lecture directe uniquement : ExoPlayer ne sait lire ni le SABR ni les plages imposées de YouTube.
         val hints = ContentHints(wantVideo = false)
             .withStreamCapabilities(allowHls = false, allowSabr = false, allowBoundedRange = false)
@@ -146,9 +179,21 @@ class YouTubeEngine(
     }
 
     private companion object {
+        const val TAG = "UnisonYouTube"
         const val EXPIRY_MARGIN_MS = 10 * 60_000L
         const val DEFAULT_LIFETIME_MS = 5 * 3_600_000L
         const val MAX_RESPONSE_BYTES = 4 * 1024 * 1024
         val RawJson = Json { ignoreUnknownKeys = true }
+    }
+}
+
+private fun File.readOrNull(): String? = runCatching { takeIf { it.isFile }?.readText() }.getOrNull()
+
+/** Écrit dans un fichier temporaire puis renomme : un fichier à moitié écrit n'est jamais relu. */
+private fun File.writeAtomically(text: String) {
+    runCatching {
+        val tmp = File(parentFile, "$name.tmp")
+        tmp.writeText(text)
+        tmp.renameTo(this)
     }
 }

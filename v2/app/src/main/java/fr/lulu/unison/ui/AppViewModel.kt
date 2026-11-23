@@ -304,11 +304,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val home: StateFlow<Load<List<Section>>> = _home.asStateFlow()
 
     fun loadHome() {
-        _home.value = Load.Loading
         // « Réessayer » recharge aussi « Tes artistes », resté vide si l'app a démarré sans réseau.
         loadArtistFeed()
         viewModelScope.launch {
-            _home.value = runCatching { catalog.home() }.fold({ Load.Ready(it) }, { Load.Failed(OFFLINE) })
+            // Le dernier accueil reçu s'affiche tout de suite ; le nouveau le remplace dès qu'il arrive.
+            if (_home.value !is Load.Ready) _home.value = graph.homeCache.read()?.let { Load.Ready(it) } ?: Load.Loading
+            runCatching { catalog.home() }.fold(
+                { sections -> _home.value = Load.Ready(sections); graph.homeCache.write(sections) },
+                // Sans réseau, on garde l'accueil déjà affiché plutôt qu'un message d'erreur.
+                { if (_home.value !is Load.Ready) _home.value = Load.Failed(OFFLINE) },
+            )
         }
     }
 

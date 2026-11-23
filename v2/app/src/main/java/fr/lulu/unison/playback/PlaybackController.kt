@@ -180,15 +180,10 @@ class PlaybackController(
         // Réseau perdu ou retrouvé : le titre préparé à l'avance doit rester jouable (téléchargé, hors ligne).
         // Le titre en cours, lui, continue sur ce qui est déjà en mémoire ; s'il avait été écarté faute de
         // réseau, il se charge dès que le réseau revient.
-        scope.launch {
-            connectivity.online.drop(1).collect {
-                val s = sessions.snapshot.value
-                when {
-                    s.anchor.item != null && s.anchor.item.uid != loaded?.uid -> reconcile(s, sessions.listenHere.value)
-                    loaded != null -> prepareNext(Gapless.upcoming(s))
-                }
-            }
-        }
+        scope.launch { connectivity.online.drop(1).collect { recheckAvailability() } }
+        // Même chose quand la liste des téléchargements finit de se lire au démarrage : un titre écarté
+        // faute de réseau était peut-être sur le téléphone.
+        scope.launch { downloads.ready.first { it }; recheckAvailability() }
         scope.launch {
             while (isActive) {
                 delay(TICK_MS)
@@ -199,6 +194,14 @@ class PlaybackController(
         runCatching {
             MediaController.Builder(context, SessionToken(context, ComponentName(context, PlaybackService::class.java))).buildAsync()
         }.onFailure { Log.w(TAG, "service média", it) }
+    }
+
+    private fun recheckAvailability() {
+        val s = sessions.snapshot.value
+        when {
+            s.anchor.item != null && s.anchor.item.uid != loaded?.uid -> reconcile(s, sessions.listenHere.value)
+            loaded != null -> prepareNext(Gapless.upcoming(s))
+        }
     }
 
     @Volatile
@@ -229,6 +232,9 @@ class PlaybackController(
             if (loaded != null) unload()
             return
         }
+        // Hors ligne, la décision dépend des titres téléchargés : on attend que leur liste soit lue
+        // (quelques millisecondes au démarrage) plutôt que de sauter un titre qui était sur le téléphone.
+        if (!connectivity.online.value && !downloads.ready.value) return
         if (skipIfOffline(s, item)) return
         // À plusieurs, chaque titre se termine en pause : le suivant part à l'heure commune, pas dès que ce téléphone a fini.
         if (exo.pauseAtEndOfMediaItems != s.shared) exo.pauseAtEndOfMediaItems = s.shared
@@ -671,7 +677,7 @@ class PlaybackController(
             if (spec.uri.scheme != TrackUri.SCHEME) return@Factory spec
             val ref = TrackUri.parse(spec.uri.toString()) ?: throw StreamUnavailableException("Titre invalide")
             val id = ref.id
-            if (downloads.isComplete(id)) {
+            if (downloads.awaitComplete(id)) {
                 main.post { loudness[id] = downloads.loudnessOf(id); applyVolume() }
                 return@Factory spec.buildUpon().setKey(Downloads.cacheKey(id)).build()
             }
