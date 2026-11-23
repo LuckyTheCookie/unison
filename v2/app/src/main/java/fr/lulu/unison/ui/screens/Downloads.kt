@@ -18,7 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,14 +56,14 @@ val DownloadsColors = listOf(androidx.compose.ui.graphics.Color(0xFF2E7DFF), and
 @Composable
 fun DownloadsScreen(vm: AppViewModel) {
     val nav = LocalNav.current
-    val rows by vm.downloadRows.collectAsState()
-    val status by vm.downloadStatus.collectAsState()
-    val paused by vm.downloadsPaused.collectAsState()
-    val waiting by vm.waitingForWifi.collectAsState()
-    val settings by vm.settings.collectAsState()
-    val online by vm.online.collectAsState()
-    val snap by vm.snapshot.collectAsState()
-    val sources by vm.sources.collectAsState()
+    val rows by vm.downloadRows.collectAsStateWithLifecycle()
+    val status by vm.downloadStatus.collectAsStateWithLifecycle()
+    val paused by vm.downloadsPaused.collectAsStateWithLifecycle()
+    val waiting by vm.waitingForWifi.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val online by vm.online.collectAsStateWithLifecycle()
+    val snap by vm.snapshot.collectAsStateWithLifecycle()
+    val sources by vm.sources.collectAsStateWithLifecycle()
     var clearing by remember { mutableStateOf(false) }
     // Place occupée, relue de temps en temps pendant les téléchargements.
     var space by remember { mutableStateOf(0L to 0L) }

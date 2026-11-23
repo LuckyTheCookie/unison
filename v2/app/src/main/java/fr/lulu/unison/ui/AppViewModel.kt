@@ -17,6 +17,7 @@ import fr.lulu.unison.offline.DownloadStatus
 import fr.lulu.unison.library.SavedRow
 import fr.lulu.unison.lyrics.Lyrics
 import fr.lulu.unison.model.JoinInfo
+import fr.lulu.unison.model.QueueItem
 import fr.lulu.unison.model.Track
 import fr.lulu.unison.model.TransportKind
 import fr.lulu.unison.session.Cmd
@@ -39,6 +40,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
@@ -77,6 +79,13 @@ sealed interface Busy {
     data class Failed(val message: String) : Busy
 }
 
+/** Ce que l'accueil montre de la session : écoute partagée, nombre de membres, nom de l'hôte. */
+data class SessionSummary(val shared: Boolean, val members: Int, val hostName: String) {
+    companion object {
+        fun of(s: fr.lulu.unison.model.SessionSnapshot) = SessionSummary(s.shared, s.members.size, s.hostName)
+    }
+}
+
 data class SearchUi(
     val query: String = "",
     val filter: SearchFilter = SearchFilter.SONGS,
@@ -101,6 +110,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val linkStatus = sessions.status
     val listenHere = sessions.listenHere
     val player = graph.playback.state
+    val driftMs = graph.playback.driftMs
+
+    // Morceaux du snapshot de session, pour que chaque écran ne se recompose qu'à ce qui le concerne
+    // (le snapshot entier change à chaque mouvement de file, d'ancre ou de membre).
+    /** Titre en cours, ou null quand rien ne joue. */
+    val currentItem: StateFlow<QueueItem?> = snapshot.map { it.anchor.item }.distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, snapshot.value.anchor.item)
+    val playing: StateFlow<Boolean> = snapshot.map { it.anchor.playing }.distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, snapshot.value.anchor.playing)
+    val sessionSummary: StateFlow<SessionSummary> = snapshot.map { SessionSummary(it.shared, it.members.size, it.hostName) }
+        .distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Eagerly, SessionSummary.of(snapshot.value))
     val settings = graph.settings
     val updateState = updates.state
     val isHost: Boolean get() = sessions.isHost

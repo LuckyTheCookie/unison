@@ -24,7 +24,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -64,9 +64,9 @@ import fr.lulu.unison.youtube.YtItem
 @Composable
 fun SearchScreen(vm: AppViewModel) {
     val nav = LocalNav.current
-    val ui by vm.search.collectAsState()
-    val snap by vm.snapshot.collectAsState()
-    val source by vm.activeSource.collectAsState()
+    val ui by vm.search.collectAsStateWithLifecycle()
+    val snap by vm.snapshot.collectAsStateWithLifecycle()
+    val source by vm.activeSource.collectAsStateWithLifecycle()
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     fun submit(q: String? = null) { if (q != null) vm.submitSearch(q) else vm.submitSearch(); focus.clearFocus(); keyboard?.hide() }

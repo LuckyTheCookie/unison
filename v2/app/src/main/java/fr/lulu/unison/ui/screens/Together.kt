@@ -38,7 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -109,12 +109,12 @@ fun qrBitmap(text: String, size: Int = 720): Bitmap {
  */
 @Composable
 fun TogetherScreen(vm: AppViewModel, onShare: (TransportKind) -> Unit, onScan: () -> Unit, onClose: () -> Unit) {
-    val snap by vm.snapshot.collectAsState()
-    val join by vm.joinInfo.collectAsState()
-    val busy by vm.busy.collectAsState()
-    val status by vm.linkStatus.collectAsState()
-    val listenHere by vm.listenHere.collectAsState()
-    val player by vm.player.collectAsState()
+    val snap by vm.snapshot.collectAsStateWithLifecycle()
+    val join by vm.joinInfo.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val status by vm.linkStatus.collectAsStateWithLifecycle()
+    val listenHere by vm.listenHere.collectAsStateWithLifecycle()
+    val driftMs by vm.driftMs.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -198,9 +198,9 @@ fun TogetherScreen(vm: AppViewModel, onShare: (TransportKind) -> Unit, onScan: (
                                     when {
                                         !listenHere -> "Tu gères la file sans sortir le son ici"
                                         !snap.shared -> "En attente d'un autre téléphone"
-                                        player.driftMs == null -> "Synchronisation…"
-                                        abs(player.driftMs!!) <= 30 -> "Parfaitement calé (${player.driftMs} ms)"
-                                        else -> "Calage en cours (${player.driftMs} ms)"
+                                        driftMs == null -> "Synchronisation…"
+                                        abs(driftMs ?: 0) <= 30 -> "Parfaitement calé ($driftMs ms)"
+                                        else -> "Calage en cours ($driftMs ms)"
                                     },
                                     style = Type.Caption, color = Ink.Tertiary,
                                 )

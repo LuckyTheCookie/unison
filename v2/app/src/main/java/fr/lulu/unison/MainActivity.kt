@@ -39,7 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +47,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,6 +69,7 @@ import fr.lulu.unison.model.Track
 import fr.lulu.unison.model.TransportKind
 import fr.lulu.unison.session.Cmd
 import fr.lulu.unison.ui.AppViewModel
+import fr.lulu.unison.ui.DownloadStatuses
 import fr.lulu.unison.ui.LocalBottomInset
 import fr.lulu.unison.ui.LocalDownloads
 import fr.lulu.unison.ui.LocalNav
@@ -98,7 +101,8 @@ import fr.lulu.unison.ui.screens.TogetherScreen
 import fr.lulu.unison.ui.screens.TrackMenu
 import fr.lulu.unison.ui.screens.UpdateCard
 import fr.lulu.unison.ui.screens.isActionable
-import fr.lulu.unison.ui.screens.rememberPosition
+import fr.lulu.unison.ui.screens.rememberDuration
+import fr.lulu.unison.ui.screens.rememberPositionState
 import fr.lulu.unison.ui.theme.Ink
 import fr.lulu.unison.ui.theme.Motion
 import fr.lulu.unison.ui.theme.Radius
@@ -166,12 +170,12 @@ private fun Modifier.glassBar(backdrop: Backdrop, shape: Shape): Modifier = this
 @Composable
 private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit) {
     val navController = rememberNavController()
-    val snap by vm.snapshot.collectAsState()
-    val settings by vm.settings.collectAsState()
-    val update by vm.updateState.collectAsState()
-    val message by vm.message.collectAsState()
-    val downloads by vm.downloadStatus.collectAsState()
-    val current = snap.anchor.item
+    val current by vm.currentItem.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val update by vm.updateState.collectAsStateWithLifecycle()
+    val message by vm.message.collectAsStateWithLifecycle()
+    val downloads = remember { DownloadStatuses() }
+    LaunchedEffect(downloads) { vm.downloadStatus.collect(downloads::update) }
 
     var playerOpen by remember { mutableStateOf(false) }
     var playerPage by remember { mutableStateOf(PlayerPage.Art) }
@@ -268,8 +272,8 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
                         )
                     }
                 }
-                if (current != null) {
-                    MiniPlayer(vm, current.track, snap.anchor.playing, backdrop, onOpen = { playerPage = PlayerPage.Art; playerOpen = true })
+                current?.let { item ->
+                    MiniPlayer(vm, item.track, backdrop, onOpen = { playerPage = PlayerPage.Art; playerOpen = true })
                     Spacer(Modifier.height(8.dp))
                 }
                 BottomBar(navController, backdrop)
@@ -315,10 +319,11 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
 }
 
 @Composable
-private fun MiniPlayer(vm: AppViewModel, track: Track, playing: Boolean, backdrop: Backdrop, onOpen: () -> Unit) {
-    val player by vm.player.collectAsState()
-    val position = rememberPosition(vm, 500)
-    val duration = vm.durationMs()
+private fun MiniPlayer(vm: AppViewModel, track: Track, backdrop: Backdrop, onOpen: () -> Unit) {
+    val player by vm.player.collectAsStateWithLifecycle()
+    val playing by vm.playing.collectAsStateWithLifecycle()
+    val position = rememberPositionState(vm, 250)
+    val duration = rememberDuration(vm)
     Box(
         Modifier.fillMaxWidth().height(64.dp).clip(Radius.Art).glassBar(backdrop, Radius.Art)
             .pointerInput(Unit) {
@@ -342,9 +347,14 @@ private fun MiniPlayer(vm: AppViewModel, track: Track, playing: Boolean, backdro
             IconBtn(R.drawable.ic_next_fill, "Suivant", { vm.send(Cmd.Skip) }, iconSize = 24.dp)
         }
         if (duration > 0) {
-            Box(Modifier.align(Alignment.BottomStart).padding(horizontal = 16.dp).fillMaxWidth().height(2.dp).background(Ink.FillStrong)) {
-                Box(Modifier.fillMaxWidth((position.toFloat() / duration).coerceIn(0f, 1f)).height(2.dp).background(Ink.Primary))
-            }
+            // Calque à part : l'avancement redessine ces 2 dp, pas le verre flouté du mini-lecteur.
+            Box(
+                Modifier.align(Alignment.BottomStart).padding(horizontal = 16.dp).fillMaxWidth().height(2.dp).graphicsLayer()
+                    .drawBehind {
+                        drawRect(Ink.FillStrong)
+                        drawRect(Ink.Primary, size = size.copy(width = size.width * (position.value.toFloat() / duration).coerceIn(0f, 1f)))
+                    },
+            )
         }
     }
 }

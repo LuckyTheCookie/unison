@@ -83,8 +83,11 @@ object KawarpBlur {
         }
     }
 
+    /** Fond par défaut, calculé une seule fois par processus (préchauffé au démarrage, hors du fil principal). */
+    val placeholderBitmap: Bitmap by lazy { placeholder() }
+
     /** Fond par défaut quand rien ne joue : quelques halos sombres, passés dans le même pipeline. */
-    fun placeholder(): Bitmap {
+    private fun placeholder(): Bitmap {
         val pixels = IntArray(SIZE * SIZE)
         val blobs = arrayOf(
             floatArrayOf(0.25f, 0.30f, 0.36f, 0.24f, 0.20f, 0.52f),

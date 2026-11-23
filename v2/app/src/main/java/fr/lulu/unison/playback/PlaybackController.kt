@@ -105,8 +105,6 @@ class PlaybackController(
         val buffering: Boolean = false,
         val playing: Boolean = false,
         val error: String? = null,
-        /** Écart avec l'ancre de la session, quand on écoute à plusieurs. */
-        val driftMs: Long? = null,
         /** Libellé de qualité du titre en cours, d'après ce que le décodeur reçoit ; null : standard ou inconnu. */
         val quality: QualityTier? = null,
         /** Résumé technique du format décodé (« FLAC · 24 bits · 96 kHz »). */
@@ -119,6 +117,13 @@ class PlaybackController(
     private val main = Handler(Looper.getMainLooper())
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
+
+    private val _driftMs = MutableStateFlow<Long?>(null)
+    /**
+     * Écart avec l'ancre de la session, quand on écoute à plusieurs. À part de [state] : il change à chaque
+     * mesure, et seul l'écran « Ensemble » l'affiche.
+     */
+    val driftMs: StateFlow<Long?> = _driftMs.asStateFlow()
 
     @Volatile
     private var settings = Settings()
@@ -624,7 +629,7 @@ class PlaybackController(
         val drift = exo.currentPosition - a.positionAt(sessions.hostNow())
 
         if (!s.shared) {
-            _state.update { it.copy(driftMs = null) }
+            _driftMs.value = null
             // Seul, l'ancre suit le lecteur, y compris pendant une mise en mémoire tampon : sinon elle file
             // en avant et une pause ou un changement de file ramènerait la lecture plus loin que le son entendu.
             val following = exo.isPlaying || (exo.playWhenReady && exo.playbackState == Player.STATE_BUFFERING)
@@ -633,7 +638,7 @@ class PlaybackController(
         }
         if (!exo.isPlaying) return
 
-        _state.update { it.copy(driftMs = drift) }
+        _driftMs.value = drift
         // Première mesure après un saut ou un départ : on apprend de combien il faut anticiper la prochaine fois.
         when (measureLead) {
             LeadKind.SEEK -> seekLeadMs = (seekLeadMs - drift / 2).coerceIn(0, 800)

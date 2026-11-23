@@ -5,14 +5,22 @@
  */
 package fr.lulu.unison.ui.kawarp
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.RuntimeShader
 import android.graphics.Shader
+import android.os.PowerManager
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -22,17 +30,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
-import coil3.ImageLoader
+import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
 import coil3.toBitmap
+import fr.lulu.unison.offline.OfflineArt
+import fr.lulu.unison.ui.LocalReduceMotion
+import fr.lulu.unison.youtube.YtParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.cos
@@ -119,9 +134,16 @@ half4 main(float2 fragCoord) {
 private fun Bitmap.asShader(): BitmapShader =
     BitmapShader(this, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { filterMode = BitmapShader.FILTER_MODE_LINEAR }
 
+/** Le fond est flou : le calculer au quart de la taille de l'écran ne se voit pas, et coûte 16 fois moins. */
+private const val DOWNSCALE = 4
+
+/** Le mouvement est lent : 30 images par seconde suffisent, et le flou des barres en verre suit le même rythme. */
+private const val FRAME_MS = 33L
+
 /**
  * Fond animé tiré de la pochette [artworkUrl]. [dim] assombrit l'ensemble pour laisser le texte lisible ;
- * [animated] à faux fige l'image (économie d'énergie).
+ * [animated] à faux fige l'image (économie d'énergie). L'image se fige aussi avec « Réduire les animations »
+ * et quand le téléphone est en économie d'énergie.
  */
 @Composable
 fun KawarpBackground(
@@ -131,8 +153,7 @@ fun KawarpBackground(
     animated: Boolean = true,
 ) {
     val context = LocalContext.current
-    val loader = remember { ImageLoader(context) }
-    val placeholder = remember { KawarpBlur.placeholder().asShader() }
+    val placeholder = remember { KawarpBlur.placeholderBitmap.asShader() }
     val shader = remember { RuntimeShader(KAWARP_AGSL) }
 
     var current by remember { mutableStateOf(placeholder) }
@@ -144,8 +165,10 @@ fun KawarpBackground(
         val target = artworkUrl?.takeIf { it.isNotBlank() }?.let { url ->
             withContext(Dispatchers.Default) {
                 runCatching {
-                    val request = ImageRequest.Builder(context).data(fr.lulu.unison.offline.OfflineArt[url] ?: url).size(KawarpBlur.SIZE).allowHardware(false).build()
-                    val image = (loader.execute(request) as? SuccessResult)?.image ?: return@runCatching null
+                    // Même adresse que la petite pochette du mini-lecteur : l'image vient du cache.
+                    val request = ImageRequest.Builder(context).data(OfflineArt[url] ?: YtParser.resize(url, 120))
+                        .size(KawarpBlur.SIZE).allowHardware(false).build()
+                    val image = (SingletonImageLoader.get(context).execute(request) as? SuccessResult)?.image ?: return@runCatching null
                     KawarpBlur.process(image.toBitmap()).asShader()
                 }.getOrNull()
             }
@@ -158,13 +181,15 @@ fun KawarpBackground(
         current = target
     }
 
+    val moving = animated && !LocalReduceMotion.current && !rememberPowerSave()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(animated) {
-        if (!animated) return@LaunchedEffect
+    LaunchedEffect(moving) {
+        if (!moving) return@LaunchedEffect
         // Le temps n'avance que lorsque l'écran est visible.
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             var last = withFrameNanos { it }
             while (true) {
+                delay(FRAME_MS)
                 val now = withFrameNanos { it }
                 time.floatValue += (now - last) / 1_000_000_000f
                 last = now
@@ -172,18 +197,44 @@ fun KawarpBackground(
         }
     }
 
-    Canvas(modifier) {
-        shader.setInputShader("current", current)
-        shader.setInputShader("next", next)
-        shader.setFloatUniform("resolution", size.width, size.height)
-        shader.setFloatUniform("texSize", KawarpBlur.SIZE.toFloat())
-        shader.setFloatUniform("mixT", transition.value)
-        shader.setFloatUniform("time", time.floatValue)
-        shader.setFloatUniform("intensity", 1.0f)
-        shader.setFloatUniform("saturation", 1.5f)
-        shader.setFloatUniform("dithering", 0.008f)
-        shader.setFloatUniform("scale", 1.0f)
-        drawRect(ShaderBrush(shader))
-        if (dim > 0f) drawRect(Color.Black.copy(alpha = dim))
+    Box(modifier) {
+        // Dessiné dans un calque hors écran au quart de la taille, puis agrandi (filtrage bilinéaire).
+        Canvas(
+            Modifier.fillMaxSize(1f / DOWNSCALE).graphicsLayer {
+                compositingStrategy = CompositingStrategy.Offscreen
+                transformOrigin = TransformOrigin(0f, 0f)
+                scaleX = DOWNSCALE.toFloat(); scaleY = DOWNSCALE.toFloat()
+            },
+        ) {
+            shader.setInputShader("current", current)
+            shader.setInputShader("next", next)
+            shader.setFloatUniform("resolution", size.width, size.height)
+            shader.setFloatUniform("texSize", KawarpBlur.SIZE.toFloat())
+            shader.setFloatUniform("mixT", transition.value)
+            shader.setFloatUniform("time", time.floatValue)
+            shader.setFloatUniform("intensity", 1.0f)
+            shader.setFloatUniform("saturation", 1.5f)
+            // Le tramage est agrandi avec le reste : plus discret, pour ne pas faire de grain visible.
+            shader.setFloatUniform("dithering", 0.004f)
+            shader.setFloatUniform("scale", 1.0f)
+            drawRect(ShaderBrush(shader))
+            if (dim > 0f) drawRect(Color.Black.copy(alpha = dim))
+        }
     }
+}
+
+/** Vrai tant que le téléphone est en économie d'énergie ; suit les changements en direct. */
+@Composable
+private fun rememberPowerSave(): Boolean {
+    val context = LocalContext.current
+    val power = remember { context.getSystemService(PowerManager::class.java) }
+    var saving by remember { mutableStateOf(power?.isPowerSaveMode == true) }
+    DisposableEffect(power) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, i: Intent?) { saving = power?.isPowerSaveMode == true }
+        }
+        context.registerReceiver(receiver, IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED), Context.RECEIVER_NOT_EXPORTED)
+        onDispose { context.unregisterReceiver(receiver) }
+    }
+    return saving
 }

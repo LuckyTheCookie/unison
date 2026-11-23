@@ -11,9 +11,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -40,7 +37,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -75,21 +71,6 @@ fun formatTime(ms: Long): String {
 @Composable
 fun Glyph(@DrawableRes res: Int, modifier: Modifier = Modifier, tint: Color = Ink.Primary, size: Dp = 24.dp) {
     Icon(painterResource(res), contentDescription = null, modifier = modifier.size(size), tint = tint)
-}
-
-/** Retour tactile sobre : l'élément se contracte légèrement sous le doigt, sans onde Material. */
-fun Modifier.pressable(
-    enabled: Boolean = true,
-    scale: Float = 0.97f,
-    onLongClick: (() -> Unit)? = null,
-    onClick: () -> Unit,
-): Modifier = composed {
-    val source = remember { MutableInteractionSource() }
-    val pressed by source.collectIsPressedAsState()
-    val s by animateFloatAsState(if (pressed) scale else 1f, spring(dampingRatio = 0.7f, stiffness = 520f), label = "press")
-    this
-        .graphicsLayer { scaleX = s; scaleY = s; alpha = if (enabled) 1f else 0.4f }
-        .combinedClickable(interactionSource = source, indication = null, enabled = enabled, onLongClick = onLongClick, onClick = onClick)
 }
 
 @Composable
@@ -162,14 +143,20 @@ fun ExplicitBadge() {
     ) { Text("E", style = Type.Caption.copy(fontSize = 9.sp, lineHeight = 10.sp), color = Ink.Secondary) }
 }
 
-/** Barres animées sur le titre en cours de lecture. */
+/** Barres animées sur le titre en cours de lecture ; lues au dessin, elles ne recomposent ni ne remesurent rien. */
 @Composable
 fun PlayingBars(active: Boolean, modifier: Modifier = Modifier, color: Color = Ink.Primary) {
     val t = rememberInfiniteTransition(label = "bars")
-    Row(modifier.size(18.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.Bottom) {
-        listOf(520, 380, 640).forEach { period ->
-            val h by t.animateFloat(0.25f, 1f, infiniteRepeatable(tween(period), RepeatMode.Reverse), label = "bar")
-            Box(Modifier.weight(1f).fillMaxHeight(if (active) h else 0.3f).clip(RoundedCornerShape(1.dp)).background(color))
+    val bars = listOf(520, 380, 640).map { period ->
+        t.animateFloat(0.25f, 1f, infiniteRepeatable(tween(period), RepeatMode.Reverse), label = "bar")
+    }
+    androidx.compose.foundation.Canvas(modifier.size(18.dp)) {
+        val gap = 2.dp.toPx()
+        val w = (size.width - gap * 2) / 3
+        val r = androidx.compose.ui.geometry.CornerRadius(1.dp.toPx())
+        bars.forEachIndexed { i, bar ->
+            val h = size.height * (if (active) bar.value else 0.3f)
+            drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(i * (w + gap), size.height - h), size = androidx.compose.ui.geometry.Size(w, h), cornerRadius = r)
         }
     }
 }

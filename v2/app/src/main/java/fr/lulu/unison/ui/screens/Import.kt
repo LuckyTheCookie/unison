@@ -26,7 +26,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,7 +73,7 @@ private val CsvTypes = arrayOf("text/*", "application/csv", "application/vnd.ms-
 @Composable
 fun ImportScreen(vm: AppViewModel) {
     val nav = LocalNav.current
-    val state by vm.importState.collectAsState()
+    val state by vm.importState.collectAsStateWithLifecycle()
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::openImport) }
     var manual by remember { mutableStateOf<ImportEntry.Song?>(null) }
 

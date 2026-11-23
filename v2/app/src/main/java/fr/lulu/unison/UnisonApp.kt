@@ -21,6 +21,7 @@ import fr.lulu.unison.source.SourceRepository
 import fr.lulu.unison.source.StreamGuard
 import fr.lulu.unison.source.SourceResolver
 import fr.lulu.unison.source.YouTubeSource
+import fr.lulu.unison.ui.kawarp.KawarpBlur
 import fr.lulu.unison.update.UpdateManager
 import fr.lulu.unison.youtube.MusicCatalog
 import fr.lulu.unison.youtube.YouTubeCatalog
@@ -83,6 +84,8 @@ class AppGraph(app: Application) {
     private val autoQueue = AutoQueue(sessions, catalog, scope, subscriptions) { settings.value.preferMyArtists }
 
     fun start() {
+        // Fond par défaut de l'écran, calculé ici plutôt que pendant la première image.
+        scope.launch(Dispatchers.Default) { KawarpBlur.placeholderBitmap }
         downloads.start()
         playback.start()
         autoQueue.start()

@@ -21,7 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -61,24 +61,24 @@ private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_
 @Composable
 fun HomeScreen(vm: AppViewModel) {
     val nav = LocalNav.current
-    val home by vm.home.collectAsState()
-    val history by vm.history.collectAsState()
-    val snap by vm.snapshot.collectAsState()
-    val join by vm.joinInfo.collectAsState()
-    val artistFeed by vm.artistFeed.collectAsState()
+    val home by vm.home.collectAsStateWithLifecycle()
+    val history by vm.history.collectAsStateWithLifecycle()
+    val session by vm.sessionSummary.collectAsStateWithLifecycle()
+    val join by vm.joinInfo.collectAsStateWithLifecycle()
+    val artistFeed by vm.artistFeed.collectAsStateWithLifecycle()
     val hello = remember { greeting() }
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {
-        item {
+        item(key = "head", contentType = "head") {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 10.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(hello, style = Type.Hero, color = Ink.Primary, modifier = Modifier.weight(1f))
                 IconBtn(R.drawable.ic_settings_line, "Réglages", nav.settings, tint = Ink.Secondary)
             }
         }
-        item { TogetherCard(shared = join != null, members = snap.members.size, hostName = snap.hostName, isHost = vm.isHost, onClick = nav.together) }
+        item(key = "together", contentType = "together") { TogetherCard(shared = join != null, members = session.members, hostName = session.hostName, isHost = vm.isHost, onClick = nav.together) }
 
         if (history.isNotEmpty()) {
-            item {
+            item(key = "recent", contentType = "row") {
                 SectionHeader("Réécouter", action = "Historique", onAction = nav.history)
                 val recent = history.take(12)
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -88,7 +88,7 @@ fun HomeScreen(vm: AppViewModel) {
         }
 
         artistFeed?.let { feed ->
-            item(key = "mine") {
+            item(key = "mine", contentType = "row") {
                 SectionHeader("Tes artistes")
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     items(feed.artists, key = { it.browseId }) { a ->
@@ -96,16 +96,16 @@ fun HomeScreen(vm: AppViewModel) {
                     }
                 }
             }
-            if (feed.popular.size >= 3) item(key = "mine-songs") { SectionBlock(Section("Titres de tes artistes", feed.popular.map { SongItem(it) }), vm) }
-            if (feed.releases.isNotEmpty()) item(key = "mine-new") { SectionBlock(Section("Sorties de tes artistes", feed.releases), vm) }
+            if (feed.popular.size >= 3) item(key = "mine-songs", contentType = "section") { SectionBlock(Section("Titres de tes artistes", feed.popular.map { SongItem(it) }), vm) }
+            if (feed.releases.isNotEmpty()) item(key = "mine-new", contentType = "section") { SectionBlock(Section("Sorties de tes artistes", feed.releases), vm) }
         }
 
         when (val h = home) {
-            Load.Loading -> item { CenterBox { Spinner() } }
-            is Load.Failed -> item {
+            Load.Loading -> item(key = "loading") { CenterBox { Spinner() } }
+            is Load.Failed -> item(key = "failed") {
                 Notice("YouTube Music ne répond pas", detail = h.message, icon = R.drawable.ic_wifi_line, action = "Réessayer", onAction = vm::loadHome)
             }
-            is Load.Ready -> items(h.value, key = { it.title }) { section -> SectionBlock(section, vm) }
+            is Load.Ready -> items(h.value, key = { "s:" + it.title }, contentType = { "section" }) { section -> SectionBlock(section, vm) }
         }
     }
 }

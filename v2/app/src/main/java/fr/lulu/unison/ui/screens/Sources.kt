@@ -38,7 +38,7 @@ import fr.lulu.unison.ui.AddSourceUi
 import fr.lulu.unison.ui.components.Chip
 import fr.lulu.unison.ui.components.Spinner
 import fr.lulu.unison.ui.theme.Radius
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,9 +66,9 @@ import fr.lulu.unison.ui.theme.Type
  */
 @Composable
 fun SourcesPanel(vm: AppViewModel) {
-    val settings by vm.settings.collectAsState()
-    val sources by vm.sources.collectAsState()
-    val health by vm.sourceHealth.collectAsState()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val sources by vm.sources.collectAsStateWithLifecycle()
+    val health by vm.sourceHealth.collectAsStateWithLifecycle()
     var removing by remember { mutableStateOf<SourceConfig?>(null) }
     LaunchedEffect(sources.size) { vm.refreshSourceHealth() }
     val active = settings.activeSource.takeIf { id -> id == SourceIds.YOUTUBE || sources.any { it.id == id } } ?: SourceIds.YOUTUBE
@@ -119,7 +119,7 @@ fun SourcesPanel(vm: AppViewModel) {
         }
     }
 
-    val adding by vm.addSource.collectAsState()
+    val adding by vm.addSource.collectAsStateWithLifecycle()
     AddSourceDialog(adding, vm)
 
     removing?.let { s ->

@@ -38,8 +38,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
@@ -130,21 +131,31 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 
 enum class PlayerPage { Art, Lyrics, Queue }
 
-/** Position de lecture, rafraîchie assez souvent pour une barre fluide et des paroles à l'heure. */
+/**
+ * Position de lecture, rafraîchie toutes les [periodMs]. C'est un état : le lire dans un `draw` ou un
+ * `graphicsLayer` ne redessine que ce qui en dépend, sans recomposer l'écran.
+ */
 @Composable
-fun rememberPosition(vm: AppViewModel, periodMs: Long = 120): Long {
-    val position by produceState(vm.positionMs()) {
+fun rememberPositionState(vm: AppViewModel, periodMs: Long = 120): State<Long> =
+    produceState(vm.positionMs()) {
         while (true) { value = vm.positionMs(); delay(periodMs) }
     }
-    return position
+
+/** Durée du titre en cours ; ne recompose que lorsqu'elle change (quand le titre est chargé). */
+@Composable
+fun rememberDuration(vm: AppViewModel): Long {
+    val duration by produceState(vm.durationMs()) {
+        while (true) { value = vm.durationMs(); delay(500) }
+    }
+    return duration
 }
 
 /** Lecteur plein écran : pochette, paroles ou file, avec les commandes toujours sous le pouce. */
 @Composable
 fun PlayerScreen(vm: AppViewModel, page: PlayerPage, onPage: (PlayerPage) -> Unit, onClose: () -> Unit, gesturing: Boolean = false) {
     val nav = LocalNav.current
-    val snap by vm.snapshot.collectAsState()
-    val settings by vm.settings.collectAsState()
+    val snap by vm.snapshot.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
     val item = snap.anchor.item
     val track = item?.track
 
@@ -189,7 +200,7 @@ fun PlayerScreen(vm: AppViewModel, page: PlayerPage, onPage: (PlayerPage) -> Uni
             }
 
             if (track != null) {
-                val favorites by vm.favoriteIds.collectAsState()
+                val favorites by vm.favoriteIds.collectAsStateWithLifecycle()
                 Row(Modifier.fillMaxWidth().padding(start = 28.dp, end = 16.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(track.title, style = Type.PlayerTitle, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -212,7 +223,7 @@ fun PlayerScreen(vm: AppViewModel, page: PlayerPage, onPage: (PlayerPage) -> Uni
                 }
             }
             // Paroles « en petit » : la ligne chantée, au-dessus de la barre, quand la pochette est affichée.
-            val lyricsUi by vm.lyrics.collectAsState()
+            val lyricsUi by vm.lyrics.collectAsStateWithLifecycle()
             val strip = (lyricsUi as? LyricsUi.Ready)?.takeIf { it.trackId == track?.id && it.lyrics.synced && it.lyrics.lines.isNotEmpty() }?.lyrics
             AnimatedVisibility(
                 page == PlayerPage.Art && strip != null,
@@ -392,12 +403,13 @@ private fun NeighbourCover(url: String?, side: Dp, x: () -> Float, step: Float) 
 /** Barre de progression : on peut la toucher ou la faire glisser pour se déplacer dans le titre. */
 @Composable
 fun SeekBar(vm: AppViewModel, modifier: Modifier = Modifier) {
-    val player by vm.player.collectAsState()
-    val position = rememberPosition(vm, 200)
-    val duration = vm.durationMs()
+    val player by vm.player.collectAsStateWithLifecycle()
+    val position = rememberPositionState(vm, 120)
+    val duration = rememberDuration(vm)
+    // Le texte ne change qu'à chaque seconde : seul lui se recompose, la barre est redessinée à part.
+    val second by remember { derivedStateOf { position.value / 1000 } }
     var dragging by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
-    val fraction = if (dragging) dragFraction else if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
     // La barre s'épaissit sous le doigt, avec un léger rebond.
     val thickness by animateDpAsState(
         if (dragging) 12.dp else 6.dp,
@@ -424,13 +436,19 @@ fun SeekBar(vm: AppViewModel, modifier: Modifier = Modifier) {
             contentAlignment = Alignment.Center,
         ) {
             Canvas(Modifier.fillMaxWidth().height(thickness)) {
+                val fraction = when {
+                    dragging -> dragFraction
+                    duration > 0 -> (position.value.toFloat() / duration).coerceIn(0f, 1f)
+                    else -> 0f
+                }
                 val r = CornerRadius(size.height / 2)
                 drawRoundRect(Color.White.copy(alpha = 0.24f), cornerRadius = r)
                 drawRoundRect(Color.White.copy(alpha = 0.92f), size = Size(size.width * fraction, size.height), cornerRadius = r)
             }
         }
         Box(Modifier.fillMaxWidth()) {
-            Text(formatTime(if (dragging) (dragFraction * duration).toLong() else position.coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)), style = Type.Time, color = Ink.Secondary, modifier = Modifier.align(Alignment.CenterStart))
+            val shownMs = if (dragging) (dragFraction * duration).toLong() else (second * 1000).coerceAtMost(if (duration > 0) duration else Long.MAX_VALUE)
+            Text(formatTime(shownMs), style = Type.Time, color = Ink.Secondary, modifier = Modifier.align(Alignment.CenterStart))
             QualityBadge(player.quality, player.format, player.upgrading, Modifier.align(Alignment.Center))
             Text(if (duration > 0) formatTime(duration) else "–:––", style = Type.Time, color = Ink.Secondary, modifier = Modifier.align(Alignment.CenterEnd))
         }
@@ -481,7 +499,7 @@ private fun QualityBadge(tier: QualityTier?, format: String?, upgrading: Boolean
 
 @Composable
 private fun Transport(vm: AppViewModel, snap: SessionSnapshot) {
-    val player by vm.player.collectAsState()
+    val player by vm.player.collectAsStateWithLifecycle()
     val has = snap.anchor.item != null
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 10.dp),
@@ -566,7 +584,7 @@ private val StripStyle = Type.PlayerArtist.copy(fontWeight = androidx.compose.ui
 
 @Composable
 private fun LyricsPage(vm: AppViewModel) {
-    val ui by vm.lyrics.collectAsState()
+    val ui by vm.lyrics.collectAsStateWithLifecycle()
     when (val l = ui) {
         LyricsUi.Idle -> Notice("Rien ne joue", icon = R.drawable.ic_lyrics_line)
         is LyricsUi.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Spinner() }

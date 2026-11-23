@@ -19,7 +19,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,12 +66,12 @@ val PlaylistColors = listOf(Color(0xFF4A4F6A), Color(0xFF1B1D2A))
 @Composable
 fun LibraryScreen(vm: AppViewModel) {
     val nav = LocalNav.current
-    val favorites by vm.favorites.collectAsState()
-    val history by vm.history.collectAsState()
-    val playlists by vm.playlists.collectAsState()
-    val saved by vm.saved.collectAsState()
-    val downloads by vm.downloadRows.collectAsState()
-    val artists by vm.subscribed.collectAsState()
+    val favorites by vm.favorites.collectAsStateWithLifecycle()
+    val history by vm.history.collectAsStateWithLifecycle()
+    val playlists by vm.playlists.collectAsStateWithLifecycle()
+    val saved by vm.saved.collectAsStateWithLifecycle()
+    val downloads by vm.downloadRows.collectAsStateWithLifecycle()
+    val artists by vm.subscribed.collectAsStateWithLifecycle()
     var creating by remember { mutableStateOf(false) }
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {
@@ -162,7 +162,7 @@ private fun LocalList(
     onMore: (index: Int, Track) -> Unit,
 ) {
     val nav = LocalNav.current
-    val snap by vm.snapshot.collectAsState()
+    val snap by vm.snapshot.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         TopBar("", onBack = nav.back) { actions() }
         LazyColumn(contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {
@@ -190,7 +190,7 @@ private fun LocalList(
 @Composable
 fun FavoritesScreen(vm: AppViewModel) {
     val nav = LocalNav.current
-    val tracks by vm.favorites.collectAsState()
+    val tracks by vm.favorites.collectAsStateWithLifecycle()
     LocalList(
         "Favoris", { GeneratedCover(R.drawable.ic_heart_fill, FavoritesColors, 180.dp) }, tracks, vm,
         emptyTitle = "Pas encore de favoris", emptyDetail = "Touche le cœur d'un titre pour le retrouver ici.",
@@ -202,7 +202,7 @@ fun FavoritesScreen(vm: AppViewModel) {
 @Composable
 fun HistoryScreen(vm: AppViewModel) {
     val nav = LocalNav.current
-    val tracks by vm.history.collectAsState()
+    val tracks by vm.history.collectAsStateWithLifecycle()
     LocalList(
         "Historique", { GeneratedCover(R.drawable.ic_history_line, HistoryColors, 180.dp) }, tracks, vm,
         emptyTitle = "Rien pour l'instant", emptyDetail = "Les titres que tu écoutes apparaîtront ici.",
@@ -214,8 +214,8 @@ fun HistoryScreen(vm: AppViewModel) {
 @Composable
 fun PlaylistScreen(pid: Long, vm: AppViewModel) {
     val nav = LocalNav.current
-    val rows by remember(pid) { vm.playlistTracks(pid) }.collectAsState(emptyList())
-    val playlist by remember(pid) { vm.playlistRow(pid) }.collectAsState(null)
+    val rows by remember(pid) { vm.playlistTracks(pid) }.collectAsStateWithLifecycle(emptyList())
+    val playlist by remember(pid) { vm.playlistRow(pid) }.collectAsStateWithLifecycle(null)
     var renaming by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<Pair<Long, Track>?>(null) }
@@ -249,7 +249,7 @@ fun PlaylistScreen(pid: Long, vm: AppViewModel) {
 /** « Tout télécharger » : icône pleine quand toute la liste est déjà sur le téléphone. */
 @Composable
 fun DownloadAllButton(tracks: List<Track>, vm: AppViewModel) {
-    val status by vm.downloadStatus.collectAsState()
+    val status by vm.downloadStatus.collectAsStateWithLifecycle()
     val all = tracks.isNotEmpty() && tracks.all { status[it.id]?.done == true }
     GlassButton(
         null, { vm.download(tracks) },

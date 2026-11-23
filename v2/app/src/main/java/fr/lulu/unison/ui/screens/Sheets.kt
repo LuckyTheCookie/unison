@@ -28,7 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -103,8 +103,8 @@ fun TrackMenu(
     onRemove: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    val favorites by vm.favoriteIds.collectAsState()
-    val downloads by vm.downloadStatus.collectAsState()
+    val favorites by vm.favoriteIds.collectAsStateWithLifecycle()
+    val downloads by vm.downloadStatus.collectAsStateWithLifecycle()
     val download = downloads[track.id]
     var picking by remember { mutableStateOf(false) }
     if (picking) { PlaylistPicker(listOf(track), vm, onDismiss = { picking = false; onDismiss() }); return }
@@ -152,7 +152,7 @@ fun TrackMenu(
 
 @Composable
 fun PlaylistPicker(tracks: List<Track>, vm: AppViewModel, onDismiss: () -> Unit) {
-    val playlists by vm.playlists.collectAsState()
+    val playlists by vm.playlists.collectAsStateWithLifecycle()
     var creating by remember { mutableStateOf(false) }
     if (creating) {
         TextPrompt("Nouvelle playlist", "Nom de la playlist", confirm = "Créer", onDismiss = { creating = false }) { name ->

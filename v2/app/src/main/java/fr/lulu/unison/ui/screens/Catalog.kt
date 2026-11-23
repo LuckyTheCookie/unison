@@ -25,7 +25,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
@@ -96,7 +96,7 @@ fun ItemCard(item: YtItem, onClick: () -> Unit, modifier: Modifier = Modifier, w
 @Composable
 fun SectionBlock(section: Section, vm: AppViewModel) {
     val nav = LocalNav.current
-    val current by vm.snapshot.collectAsState()
+    val current by vm.snapshot.collectAsStateWithLifecycle()
     val currentId = current.anchor.item?.track?.id
     val more = section.more
     SectionHeader(
@@ -217,8 +217,8 @@ fun CollectionScreen(browseId: String, vm: AppViewModel) {
         value = Load.Loading
         value = vm.collection(browseId)
     }
-    val snap by vm.snapshot.collectAsState()
-    val saved by vm.saved.collectAsState()
+    val snap by vm.snapshot.collectAsStateWithLifecycle()
+    val saved by vm.saved.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         TopBar("", onBack = nav.back)
         LoadBox(load, onRetry = { attempt++ }) { page ->
@@ -260,8 +260,8 @@ fun ArtistScreen(browseId: String, vm: AppViewModel) {
         value = Load.Loading
         value = vm.artist(browseId)
     }
-    val snap by vm.snapshot.collectAsState()
-    val subscribed by vm.subscribedIds.collectAsState()
+    val snap by vm.snapshot.collectAsStateWithLifecycle()
+    val subscribed by vm.subscribedIds.collectAsStateWithLifecycle()
     Box(Modifier.fillMaxSize()) {
         LoadBox(load, onRetry = { attempt++ }) { page ->
             LazyColumn(contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {

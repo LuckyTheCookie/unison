@@ -1,11 +1,9 @@
 package fr.lulu.unison.ui
 
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import fr.lulu.unison.model.Track
-import fr.lulu.unison.offline.DownloadStatus
 import fr.lulu.unison.youtube.AlbumItem
 import fr.lulu.unison.youtube.ArtistItem
 import fr.lulu.unison.youtube.BrowseRef
@@ -57,4 +55,4 @@ val LocalBottomInset = staticCompositionLocalOf<Dp> { 0.dp }
 val LocalReduceMotion = staticCompositionLocalOf { false }
 
 /** État des téléchargements par identifiant de titre : chaque ligne de titre affiche le sien. */
-val LocalDownloads = compositionLocalOf<Map<String, DownloadStatus>> { emptyMap() }
+val LocalDownloads = staticCompositionLocalOf { DownloadStatuses() }
