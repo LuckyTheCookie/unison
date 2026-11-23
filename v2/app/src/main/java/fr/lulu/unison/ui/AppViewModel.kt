@@ -10,6 +10,9 @@ import fr.lulu.unison.importer.ImportEntry
 import fr.lulu.unison.importer.ImportUi
 import fr.lulu.unison.artists.ArtistFeed
 import fr.lulu.unison.library.DownloadRow
+import fr.lulu.unison.library.LibraryHit
+import fr.lulu.unison.library.LibraryMix
+import fr.lulu.unison.library.LibrarySearch
 import fr.lulu.unison.library.SubscriptionRow
 import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.library.PlaylistSummary
@@ -33,6 +36,7 @@ import fr.lulu.unison.youtube.SongItem
 import fr.lulu.unison.youtube.Section
 import fr.lulu.unison.youtube.YtItem
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +51,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
 /** Chargement d'une page du catalogue. */
@@ -338,6 +343,51 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // --- Recherche ---
+
+    // --- Bibliothèque : recherche dans ses titres et « Mix » ---
+
+    private val _libraryQuery = MutableStateFlow("")
+    val libraryQuery: StateFlow<String> = _libraryQuery.asStateFlow()
+
+    /** Titres de la bibliothèque qui correspondent à [libraryQuery] ; null tant que rien n'est cherché. */
+    val libraryHits: StateFlow<List<LibraryHit>?> = _libraryQuery
+        .transformLatest { q ->
+            if (q.isBlank()) { emit(null); return@transformLatest }
+            delay(120)
+            val entries = runCatching { library.entries() }.getOrDefault(emptyList())
+            emit(withContext(Dispatchers.Default) { LibrarySearch.search(q, entries) })
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    fun setLibraryQuery(q: String) { _libraryQuery.value = q }
+
+    private val _mixing = MutableStateFlow(false)
+    /** Vrai pendant que le mix se prépare (lecture de toute la bibliothèque). */
+    val mixing: StateFlow<Boolean> = _mixing.asStateFlow()
+
+    /**
+     * Lance un mix de toute la bibliothèque, mélangé, en remplaçant la file. Hors ligne, seulement avec les
+     * titres téléchargés.
+     */
+    fun playMix() {
+        if (_mixing.value) return
+        _mixing.value = true
+        viewModelScope.launch {
+            try {
+                val entries = runCatching { library.entries() }.getOrDefault(emptyList())
+                val offline = !online.value
+                val ready = if (offline) downloadStatus.value.filterValues { it.done }.keys else null
+                val mix = withContext(Dispatchers.Default) { LibraryMix.build(entries, onlyIds = ready) }
+                when {
+                    mix.isEmpty() && offline -> toast("Hors ligne : télécharge des titres pour lancer un mix")
+                    mix.isEmpty() -> toast("Ajoute des favoris ou une playlist pour lancer un mix")
+                    else -> { playAll(mix); toast("Mix de ${mix.size} titres") }
+                }
+            } finally {
+                _mixing.value = false
+            }
+        }
+    }
 
     private val _search = MutableStateFlow(SearchUi())
     val search: StateFlow<SearchUi> = _search.asStateFlow()

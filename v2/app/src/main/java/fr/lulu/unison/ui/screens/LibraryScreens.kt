@@ -72,10 +72,17 @@ fun LibraryScreen(vm: AppViewModel) {
     val saved by vm.saved.collectAsStateWithLifecycle()
     val downloads by vm.downloadRows.collectAsStateWithLifecycle()
     val artists by vm.subscribed.collectAsStateWithLifecycle()
+    val mixing by vm.mixing.collectAsStateWithLifecycle()
     var creating by remember { mutableStateOf(false) }
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {
-        item { Text("Bibliothèque", style = Type.Hero, color = Ink.Primary, modifier = Modifier.padding(start = 20.dp, top = 14.dp, bottom = 12.dp)) }
+        item(key = "head") {
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 14.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Bibliothèque", style = Type.Hero, color = Ink.Primary, modifier = Modifier.weight(1f))
+                IconBtn(R.drawable.ic_search_line, "Chercher dans la bibliothèque", nav.librarySearch, background = Ink.Fill, size = 44.dp, iconSize = 22.dp)
+            }
+        }
+        item(key = "mix") { MixCard(mixing, onPlay = vm::playMix) }
         item {
             LibraryRow("Favoris", plural(favorites.size, "titre"), onClick = nav.favorites) { GeneratedCover(R.drawable.ic_heart_fill, FavoritesColors, 54.dp) }
             LibraryRow("Historique", plural(history.size, "titre"), onClick = nav.history) { GeneratedCover(R.drawable.ic_history_line, HistoryColors, 54.dp) }

@@ -23,6 +23,8 @@ class Nav(
     val settings: () -> Unit,
     val downloads: () -> Unit,
     val import: () -> Unit,
+    /** Recherche dans la bibliothèque (favoris, playlists, téléchargements, historique). */
+    val librarySearch: () -> Unit,
     val together: () -> Unit,
     /** Ouvre le menu d'un titre (lire ensuite, favoris, playlist…). */
     val trackMenu: (Track) -> Unit,

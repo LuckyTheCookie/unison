@@ -151,6 +151,19 @@ interface LibraryDao {
     @Query("SELECT * FROM playlist WHERE pid = :pid")
     fun playlist(pid: Long): Flow<PlaylistRow?>
 
+    // Instantanés de toute la bibliothèque, pour la recherche et le mix.
+    @Query("SELECT * FROM favorite")
+    suspend fun allFavorites(): List<FavoriteRow>
+
+    @Query("SELECT * FROM history ORDER BY playedAt DESC LIMIT :limit")
+    suspend fun recentHistory(limit: Int): List<HistoryRow>
+
+    @Query("SELECT * FROM playlist")
+    suspend fun allPlaylists(): List<PlaylistRow>
+
+    @Query("SELECT * FROM playlist_track")
+    suspend fun allPlaylistTracks(): List<PlaylistTrackRow>
+
     @Query("SELECT pid FROM playlist WHERE name = :name ORDER BY createdAt LIMIT 1")
     suspend fun playlistIdByName(name: String): Long?
 
@@ -351,6 +364,17 @@ class Library(context: Context, private val now: () -> Long = System::currentTim
 
     val downloads: Flow<List<DownloadRow>> = dao.downloads()
     suspend fun allDownloads(): List<DownloadRow> = dao.allDownloads()
+
+    /** Tout ce que contient la bibliothèque, titre par titre et endroit par endroit. */
+    suspend fun entries(): List<LibraryEntry> {
+        val names = dao.allPlaylists().associate { it.pid to it.name }
+        return buildList {
+            dao.allFavorites().forEach { add(LibraryEntry(it.track.toTrack(), LibrarySource.Favorite)) }
+            dao.allPlaylistTracks().forEach { add(LibraryEntry(it.track.toTrack(), LibrarySource.Playlist(names[it.pid] ?: "Playlist"))) }
+            dao.allDownloads().filter { it.state == DownloadState.DONE }.forEach { add(LibraryEntry(it.track.toTrack(), LibrarySource.Download)) }
+            dao.recentHistory(500).forEach { add(LibraryEntry(it.track.toTrack(), LibrarySource.History(it.plays))) }
+        }
+    }
     suspend fun download(id: String): DownloadRow? = dao.download(id)
 
     /** Ajoute les titres absents à la liste des téléchargements ; renvoie ceux qui sont nouveaux. */

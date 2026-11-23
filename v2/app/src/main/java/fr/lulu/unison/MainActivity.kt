@@ -119,6 +119,7 @@ import fr.lulu.unison.ui.screens.HistoryScreen
 import fr.lulu.unison.ui.screens.HomeScreen
 import fr.lulu.unison.ui.screens.ImportScreen
 import fr.lulu.unison.ui.screens.LibraryScreen
+import fr.lulu.unison.ui.screens.LibrarySearchScreen
 import fr.lulu.unison.ui.screens.PlayerPage
 import fr.lulu.unison.ui.screens.PlayerScreen
 import fr.lulu.unison.ui.screens.PlaylistScreen
@@ -263,6 +264,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
             settings = { navController.navigate("settings") },
             downloads = { navController.navigate("downloads") },
             import = { navController.navigate("import") },
+            librarySearch = { navController.navigate("library-search") },
             together = { togetherOpen = true },
             trackMenu = { menuTrack = it },
         )
@@ -313,6 +315,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
                         composable("settings") { SettingsScreen(vm) }
                         composable("downloads") { DownloadsScreen(vm) }
                         composable("import") { ImportScreen(vm) }
+                        composable("library-search") { LibrarySearchScreen(vm) }
                     }
                 }
             }
