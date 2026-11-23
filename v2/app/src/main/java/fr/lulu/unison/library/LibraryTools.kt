@@ -11,6 +11,8 @@ sealed interface LibrarySource {
     data class Playlist(val name: String) : LibrarySource
     data class History(val plays: Int) : LibrarySource
     data object Download : LibrarySource
+    /** Album ou playlist YouTube Music enregistré dans la bibliothèque. */
+    data class Saved(val title: String) : LibrarySource
 }
 
 /** Un titre tel qu'il apparaît à un endroit de la bibliothèque (le même titre peut apparaître plusieurs fois). */
@@ -25,8 +27,9 @@ data class LibraryHit(val track: Track, val sources: List<LibrarySource>) {
     private fun order(s: LibrarySource) = when (s) {
         LibrarySource.Favorite -> 0
         is LibrarySource.Playlist -> 1
-        LibrarySource.Download -> 2
-        is LibrarySource.History -> 3
+        is LibrarySource.Saved -> 2
+        LibrarySource.Download -> 3
+        is LibrarySource.History -> 4
     }
 
     private fun label(s: LibrarySource) = when (s) {
@@ -34,6 +37,7 @@ data class LibraryHit(val track: Track, val sources: List<LibrarySource>) {
         is LibrarySource.Playlist -> s.name
         LibrarySource.Download -> "Téléchargé"
         is LibrarySource.History -> "Écouté"
+        is LibrarySource.Saved -> s.title
     }
 }
 
@@ -53,7 +57,13 @@ object LibrarySearch {
                 val title = normalize(hit.track.title)
                 val haystack = buildString {
                     append(title).append(' ').append(normalize(hit.track.artist)).append(' ').append(normalize(hit.track.album))
-                    hit.sources.filterIsInstance<LibrarySource.Playlist>().forEach { append(' ').append(normalize(it.name)) }
+                    hit.sources.forEach { s ->
+                        when (s) {
+                            is LibrarySource.Playlist -> append(' ').append(normalize(s.name))
+                            is LibrarySource.Saved -> append(' ').append(normalize(s.title))
+                            else -> Unit
+                        }
+                    }
                 }
                 if (words.any { it !in haystack }) return@mapNotNull null
                 val rank = when {
@@ -81,14 +91,17 @@ object LibrarySearch {
 }
 
 /**
- * « Mix » : un mélange de toute la bibliothèque. Les titres aimés reviennent plus souvent que ceux juste
- * écoutés une fois, et deux titres du même artiste ne se suivent pas quand on peut l'éviter.
+ * « Mix » : un mélange de ce que l'utilisateur a choisi de garder — favoris, playlists, albums et playlists
+ * enregistrés, téléchargements. L'historique n'en fait pas partie : un titre écouté une fois n'est pas un titre
+ * qu'on aime. Les titres présents à plusieurs endroits reviennent plus souvent, et deux titres du même artiste
+ * ne se suivent pas quand on peut l'éviter.
  */
 object LibraryMix {
     const val SIZE = 120
 
     fun build(entries: List<LibraryEntry>, random: Random = Random.Default, size: Int = SIZE, onlyIds: Set<String>? = null): List<Track> {
-        val hits = LibrarySearch.group(entries).filter { onlyIds == null || it.track.id in onlyIds }
+        val hits = LibrarySearch.group(entries.filter { it.source !is LibrarySource.History })
+            .filter { onlyIds == null || it.track.id in onlyIds }
         if (hits.isEmpty()) return emptyList()
         // Tirage pondéré sans remise (Efraimidis–Spirakis) : clé = u^(1/poids), on garde les plus grandes.
         val picked = hits
@@ -104,8 +117,9 @@ object LibraryMix {
         when (s) {
             LibrarySource.Favorite -> 3.0
             is LibrarySource.Playlist -> 2.0
+            is LibrarySource.Saved -> 2.0
             LibrarySource.Download -> 1.5
-            is LibrarySource.History -> 1.0 + minOf(s.plays, 10) * 0.2
+            is LibrarySource.History -> 0.0
         }
     }.coerceAtLeast(0.5)
 
@@ -122,4 +136,30 @@ object LibraryMix {
 
     private fun sameArtist(a: Track, b: Track) =
         a.artist.isNotBlank() && LibrarySearch.normalize(a.artist) == LibrarySearch.normalize(b.artist)
+}
+
+/**
+ * « Pour toi » : des titres proches de ceux que l'utilisateur écoute le plus et de ses favoris (les radios
+ * YouTube Music de ces titres), sans ce qu'il connaît déjà. On prend tour à tour dans chaque radio, pour que
+ * chaque goût soit représenté.
+ */
+object ForYou {
+    fun pick(radios: List<List<Track>>, known: Set<String>, limit: Int = 30): List<Track> {
+        val seen = HashSet<String>()
+        val out = mutableListOf<Track>()
+        val iterators = radios.map { it.iterator() }
+        while (out.size < limit && iterators.any { it.hasNext() }) {
+            for (it in iterators) {
+                while (it.hasNext()) {
+                    val t = it.next()
+                    val same = LibrarySearch.normalize("${t.title} ${t.artist}")
+                    if (t.id in known || !seen.add(t.id) || !seen.add(same)) continue
+                    out += t
+                    break
+                }
+                if (out.size >= limit) break
+            }
+        }
+        return out
+    }
 }

@@ -553,53 +553,6 @@ private fun ModeBtn(icon: Int, label: String, on: Boolean, onClick: () -> Unit) 
 
 // --- Paroles ---
 
-/**
- * Bandeau d'une ligne au-dessus de la barre : la ligne chantée glisse vers le haut en fondu quand la suivante
- * arrive (340 ms), et s'estompe juste avant sa fin pour que la nouvelle entre à pleine force. Hauteur de ligne
- * fixe : la pochette ne bouge pas d'une écriture à l'autre. Toucher ouvre les paroles complètes.
- */
-@Composable
-private fun LyricStrip(lyrics: Lyrics, vm: AppViewModel, onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    val reduce = LocalReduceMotion.current
-    val clock = remember { mutableLongStateOf(vm.positionMs()) }
-    LaunchedEffect(Unit) { while (true) withFrameNanos { clock.longValue = vm.positionMs() } }
-    val index by remember(lyrics) { derivedStateOf { lyrics.indexAt(clock.longValue + 150) } }
-    Box(
-        modifier.fillMaxWidth().height(STRIP_HEIGHT).clipToBounds().pressable(scale = 0.98f, onClick = onOpen),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        AnimatedContent(
-            index,
-            transitionSpec = {
-                if (reduce) EnterTransition.None togetherWith ExitTransition.None
-                else (slideInVertically(tween(340, easing = FastOutSlowInEasing)) { (it * 0.35f).toInt() } + fadeIn(tween(340, easing = FastOutSlowInEasing))) togetherWith
-                    (slideOutVertically(tween(340, easing = FastOutSlowInEasing)) { -(it * 0.35f).toInt() } + fadeOut(tween(340, easing = FastOutSlowInEasing)))
-            },
-            label = "ligne",
-        ) { i ->
-            val line = lyrics.lines.getOrNull(i)
-            val text = line?.text?.takeIf { it.isNotBlank() }
-            Text(
-                text ?: "♪",
-                style = StripStyle,
-                color = Ink.Primary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth().graphicsLayer {
-                    alpha = when {
-                        text == null -> 0.5f
-                        reduce -> 0.78f
-                        else -> LyricFade.alpha(lyrics, i, clock.longValue)
-                    }
-                },
-            )
-        }
-    }
-}
-
-private val STRIP_HEIGHT = 24.dp
-private val StripStyle = Type.PlayerArtist.copy(fontWeight = androidx.compose.ui.text.font.FontWeight(600), lineHeight = 20.sp)
-
 @Composable
 private fun LyricsPage(vm: AppViewModel) {
     val ui by vm.lyrics.collectAsStateWithLifecycle()
@@ -614,7 +567,7 @@ private fun LyricsPage(vm: AppViewModel) {
 }
 
 /** Fondu en haut et en bas de la liste, pour que les lignes entrent et sortent en douceur. */
-private fun Modifier.fadeEdges(): Modifier = this
+internal fun Modifier.fadeEdges(): Modifier = this
     .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
     .drawWithContent {
         drawContent()
@@ -623,90 +576,6 @@ private fun Modifier.fadeEdges(): Modifier = this
             blendMode = BlendMode.DstIn,
         )
     }
-
-@Composable
-private fun SyncedLyrics(lyrics: Lyrics, vm: AppViewModel) {
-    // Position lue à chaque image : seul le dessin de la ligne en cours en dépend, pas la composition.
-    val clock = remember { mutableLongStateOf(vm.positionMs()) }
-    LaunchedEffect(Unit) {
-        while (true) withFrameNanos { clock.longValue = vm.positionMs() }
-    }
-    val active by remember(lyrics) { derivedStateOf { lyrics.indexAt(clock.longValue + 150) } }
-    val state = rememberLazyListState()
-    BoxWithConstraints(Modifier.fillMaxSize().fadeEdges()) {
-        // La ligne en cours se pose au tiers haut de la zone, hors du fondu des bords.
-        val top = maxHeight * 0.26f
-        LaunchedEffect(active) {
-            if (active >= 0 && !state.isScrollInProgress) state.animateScrollToItem(active)
-        }
-        LazyColumn(state = state, contentPadding = PaddingValues(top = top, bottom = maxHeight * 0.6f), modifier = Modifier.fillMaxSize()) {
-            itemsIndexed(lyrics.lines) { i, line ->
-                val isActive = i == active
-                // Lignes passées : pleines ; ligne en cours : remplie au fil du chant ; à venir : estompées.
-                val spec = if (LocalReduceMotion.current) snap() else tween<Float>(320, easing = Motion.Ease)
-                val alpha by animateFloatAsState(if (isActive) 1f else if (i < active) 0.5f else 0.85f, spec, label = "a")
-                val scale by animateFloatAsState(if (isActive) 1.03f else 0.96f, spec, label = "s")
-                KaraokeLine(
-                    line,
-                    filled = {
-                        when {
-                            i < active -> Float.MAX_VALUE
-                            i > active -> 0f
-                            line.text.isBlank() -> Float.MAX_VALUE
-                            else -> Karaoke.progress(line, clock.longValue)
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                        .graphicsLayer { this.alpha = alpha; scaleX = scale; scaleY = scale; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f) }
-                        .pressable(scale = 0.99f) { vm.send(Cmd.Seek(line.timeMs)) }
-                        .padding(horizontal = 28.dp, vertical = 10.dp),
-                )
-            }
-        }
-    }
-}
-
-/**
- * Une ligne de paroles dont les [filled] premiers caractères (fraction comprise) sont pleinement éclairés,
- * le reste estompé. Le remplissage suit chaque ligne visuelle quand le texte passe à la ligne, et n'est lu
- * qu'au dessin : il avance à chaque image sans recomposer.
- */
-@Composable
-private fun KaraokeLine(line: LyricLine, filled: () -> Float, modifier: Modifier = Modifier) {
-    val text = line.text.ifBlank { "♪" }
-    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
-    Text(
-        text, style = Type.Lyric, color = Color.Transparent,
-        onTextLayout = { layout = it },
-        modifier = modifier.drawWithContent {
-            val l = layout ?: return@drawWithContent
-            drawText(l, color = Ink.Primary.copy(alpha = 0.32f))
-            val progress = filled().coerceIn(0f, text.length.toFloat())
-            if (progress <= 0f) return@drawWithContent
-            val whole = progress.toInt()
-            for (row in 0 until l.lineCount) {
-                val start = l.getLineStart(row)
-                val end = l.getLineEnd(row, visibleEnd = true)
-                if (progress <= start) break
-                if (start >= end) continue
-                val right = when {
-                    progress >= end -> l.getLineRight(row)
-                    else -> {
-                        // Bord du remplissage : début du caractère en cours plus la fraction déjà chantée.
-                        val box = l.getBoundingBox(whole.coerceIn(start, end - 1))
-                        box.left + box.width * (progress - whole)
-                    }
-                }
-                val top = l.getLineTop(row)
-                val bottom = l.getLineBottom(row)
-                clipRect(left = l.getLineLeft(row), top = top, right = right, bottom = bottom) {
-                    drawText(l, color = Ink.Primary)
-                }
-                if (progress < end) break
-            }
-        },
-    )
-}
 
 @Composable
 private fun PlainLyrics(lyrics: Lyrics) {

@@ -37,3 +37,26 @@ class HomeCache(private val file: File) {
         val Store = Json { ignoreUnknownKeys = true }
     }
 }
+
+/** Liste de titres gardée avec sa date (la sélection « Pour toi », recalculée deux fois par jour au plus). */
+class TrackListCache(private val file: File) {
+    @Serializable
+    private data class Stored(val savedAt: Long, val tracks: List<fr.lulu.unison.model.Track>)
+
+    suspend fun read(): Pair<Long, List<fr.lulu.unison.model.Track>>? = withContext(Dispatchers.IO) {
+        runCatching {
+            if (!file.isFile) return@runCatching null
+            Json { ignoreUnknownKeys = true }.decodeFromString(Stored.serializer(), file.readText()).let { it.savedAt to it.tracks }
+        }.getOrNull()
+    }
+
+    suspend fun write(tracks: List<fr.lulu.unison.model.Track>, now: Long = System.currentTimeMillis()) = withContext(Dispatchers.IO) {
+        runCatching {
+            file.parentFile?.mkdirs()
+            val tmp = File(file.parentFile, file.name + ".tmp")
+            tmp.writeText(Json.encodeToString(Stored.serializer(), Stored(now, tracks)))
+            tmp.renameTo(file)
+        }
+        Unit
+    }
+}

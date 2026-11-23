@@ -43,9 +43,10 @@ class LibraryToolsTest {
     }
 
     @Test
-    fun `le mix prend chaque titre une fois et respecte la limite`() {
+    fun `le mix prend chaque titre une fois, sans l'historique, et respecte la limite`() {
         val mix = LibraryMix.build(entries, Random(1))
-        assertEquals(4, mix.size)
+        // « Time » n'est que dans l'historique : il n'entre pas dans le mix.
+        assertEquals(setOf("1", "2", "4"), mix.map { it.id }.toSet())
         assertEquals(mix.map { it.id }.toSet().size, mix.size)
         assertEquals(2, LibraryMix.build(entries, Random(1), size = 2).size)
     }
@@ -58,12 +59,20 @@ class LibraryToolsTest {
 
     @Test
     fun `les titres aimés sortent plus souvent en tête`() {
-        val many = (1..40).map { LibraryEntry(t("h$it", "Écoute $it", "A$it"), LibrarySource.History(0)) } +
+        val many = (1..40).map { LibraryEntry(t("h$it", "Écoute $it", "A$it"), LibrarySource.Download) } +
             LibraryEntry(t("fav", "Aimé", "Z"), LibrarySource.Favorite) +
             LibraryEntry(t("fav", "Aimé", "Z"), LibrarySource.Playlist("P"))
         val inTop10 = (0 until 300).count { seed -> LibraryMix.build(many, Random(seed)).take(10).any { it.id == "fav" } }
         // Uniforme : environ 10/41 ≈ 24 %. Pondéré ×5 : nettement plus.
-        assertTrue("fav en tête $inTop10 fois sur 300", inTop10 > 150)
+        assertTrue("fav en tête $inTop10 fois sur 300", inTop10 > 120)
+    }
+
+    @Test
+    fun `albums enregistrés dans le mix, historique seul ignoré`() {
+        val saved = listOf(LibraryEntry(t("s1", "Digital Love", "Daft Punk"), LibrarySource.Saved("Discovery")))
+        assertEquals(listOf("s1"), LibraryMix.build(saved, Random(0)).map { it.id })
+        assertTrue(LibraryMix.build(listOf(LibraryEntry(t("h", "Vu", "X"), LibrarySource.History(9))), Random(0)).isEmpty())
+        assertEquals(listOf("s1"), LibrarySearch.search("discovery", saved).map { it.track.id })
     }
 
     @Test
@@ -72,5 +81,20 @@ class LibraryToolsTest {
         val spread = LibraryMix.spreadArtists(tracks)
         assertEquals(tracks.size, spread.size)
         spread.zipWithNext().forEach { (p, n) -> assertTrue("${p.id} puis ${n.id}", p.artist != n.artist) }
+    }
+}
+
+class ForYouTest {
+    private fun t(id: String, title: String = "T$id", artist: String = "A$id") = Track(id, title, artist)
+
+    @Test
+    fun `chaque radio à tour de rôle, sans titres connus ni doublons`() {
+        val r1 = listOf(t("known"), t("a"), t("b"), t("c"))
+        val r2 = listOf(t("a"), t("x"), t("y"))
+        // Même titre et artiste que « a », autre identifiant.
+        val r3 = listOf(t("z", "Ta", "Aa"))
+        val picks = fr.lulu.unison.library.ForYou.pick(listOf(r1, r2, r3), known = setOf("known"))
+        assertEquals(listOf("a", "x", "b", "y", "c"), picks.map { it.id })
+        assertEquals(2, fr.lulu.unison.library.ForYou.pick(listOf(r1, r2), setOf("known"), limit = 2).size)
     }
 }

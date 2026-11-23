@@ -75,7 +75,8 @@ private val MixColors = listOf(Color(0xFF8B5CF6), Color(0xFFEC4899), Color(0xFF1
 
 /**
  * Carte « Mix » en haut de la bibliothèque : un dégradé qui dérive lentement (figé avec « Réduire les
- * animations »), et un bouton lecture. Lance un mélange de favoris, playlists, téléchargements et écoutes.
+ * animations »), et un bouton lecture. Lance un mélange de favoris, playlists, albums enregistrés et
+ * téléchargements.
  */
 @Composable
 fun MixCard(mixing: Boolean, onPlay: () -> Unit, modifier: Modifier = Modifier) {
@@ -108,7 +109,7 @@ fun MixCard(mixing: Boolean, onPlay: () -> Unit, modifier: Modifier = Modifier) 
         Column(Modifier.weight(1f)) {
             Text("Mix", style = Type.Heading, color = Color.White)
             Text(
-                "Tes favoris, playlists et écoutes, mélangés", style = Type.Body, color = Color.White.copy(alpha = 0.82f),
+                "Tes favoris, playlists et albums, mélangés", style = Type.Body, color = Color.White.copy(alpha = 0.82f),
                 maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
         }

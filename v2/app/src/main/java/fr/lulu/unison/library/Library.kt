@@ -128,6 +128,9 @@ interface LibraryDao {
     @Query("SELECT * FROM history ORDER BY playedAt DESC LIMIT :limit")
     fun history(limit: Int): Flow<List<HistoryRow>>
 
+    @Query("SELECT * FROM history WHERE plays >= 2 ORDER BY plays DESC, playedAt DESC LIMIT :limit")
+    fun mostPlayed(limit: Int): Flow<List<HistoryRow>>
+
     @Query("SELECT plays FROM history WHERE trackId = :id")
     suspend fun plays(id: String): Int?
 
@@ -320,6 +323,8 @@ class Library(context: Context, private val now: () -> Long = System::currentTim
     val favorites: Flow<List<Track>> = dao.favorites().map { rows -> rows.map { it.track.toTrack() } }
     val favoriteIds: Flow<Set<String>> = dao.favoriteIds().map { it.toSet() }
     val history: Flow<List<Track>> = dao.history(200).map { rows -> rows.map { it.track.toTrack() } }
+    /** Titres écoutés au moins deux fois, les plus écoutés d'abord. */
+    val mostPlayed: Flow<List<Track>> = dao.mostPlayed(50).map { rows -> rows.map { it.track.toTrack() } }
     val playlists: Flow<List<PlaylistSummary>> = dao.playlists()
     val saved: Flow<List<SavedRow>> = dao.saved()
 

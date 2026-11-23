@@ -244,6 +244,28 @@ object Karaoke {
         return lyrics.copy(lines = out)
     }
 
+    /**
+     * Ajoute une ligne vide (affichée en trois points) dans les passages instrumentaux d'au moins 4,5 s, intro
+     * comprise. Sans effet sur des paroles qui en ont déjà : on peut l'appliquer plusieurs fois.
+     */
+    fun withInterludes(lyrics: Lyrics): Lyrics {
+        if (!lyrics.synced || lyrics.lines.isEmpty()) return lyrics
+        val lines = lyrics.lines
+        val out = mutableListOf<LyricLine>()
+        val first = lines.first()
+        if (first.text.isNotBlank() && first.timeMs >= INTERLUDE_MS) out += LyricLine(0, "")
+        lines.forEachIndexed { i, line ->
+            out += line
+            val next = lines.getOrNull(i + 1) ?: return@forEachIndexed
+            if (line.text.isBlank() || next.text.isBlank()) return@forEachIndexed
+            val end = line.words?.lastOrNull()?.endMs ?: return@forEachIndexed
+            if (next.timeMs - end >= INTERLUDE_MS) out += LyricLine(end + 250, "")
+        }
+        return if (out.size == lines.size) lyrics else lyrics.copy(lines = out)
+    }
+
+    private const val INTERLUDE_MS = 4_500L
+
     private fun lineEnd(line: LyricLine, next: Long?, from: Long): Long {
         val guess = from + 600 + (weight(line.text) * 90).toLong()
         return (next?.coerceAtMost(guess.coerceAtLeast(from + 300)) ?: guess).coerceAtLeast(from + 1)

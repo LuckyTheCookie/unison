@@ -50,3 +50,11 @@ Le bruit simplex utilisé par le shader vient de *webgl-noise* (Ian McEwan, Ashi
 ## Paroles
 
 Fournies par [LRCLIB](https://lrclib.net) et NetEase Cloud Music.
+
+## BitChord
+
+- Source : https://github.com/kushagrasinghx/BitChord
+- Licence : GPL-3.0
+- Utilisation : l'horloge des paroles (`lyrics/LyricClock.kt`) reprend l'idée et les réglages de son `LyricClock` ;
+  le choix des services de paroles mot à mot (BetterLyrics, LyricsPlus) et le format de LyricsPlus viennent de
+  ses fournisseurs ; le rendu des paroles (`ui/screens/LyricsView.kt`) s'inspire de son écran de paroles.

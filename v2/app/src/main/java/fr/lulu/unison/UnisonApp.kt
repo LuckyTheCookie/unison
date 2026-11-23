@@ -29,6 +29,7 @@ import fr.lulu.unison.source.YouTubeSource
 import fr.lulu.unison.ui.kawarp.KawarpBlur
 import fr.lulu.unison.update.UpdateManager
 import fr.lulu.unison.youtube.HomeCache
+import fr.lulu.unison.youtube.TrackListCache
 import fr.lulu.unison.youtube.MusicCatalog
 import fr.lulu.unison.youtube.YouTubeCatalog
 import fr.lulu.unison.youtube.YouTubeEngine
@@ -66,6 +67,7 @@ class AppGraph(app: Application) {
     )
     val catalog: MusicCatalog = YouTubeCatalog(youtube)
     val homeCache = HomeCache(File(app.cacheDir, "home.json"))
+    val forYouCache = TrackListCache(File(app.cacheDir, "for-you.json"))
     /** Sources importées par l'utilisateur (aucune par défaut). */
     val sources = SourceRepository(File(app.filesDir, "sources.json"))
     /** Garde des flux des sources importées, posée sur le client HTTP du lecteur et des téléchargements. */

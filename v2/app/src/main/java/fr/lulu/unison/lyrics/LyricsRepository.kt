@@ -5,6 +5,9 @@ import fr.lulu.unison.model.Track
 import fr.lulu.unison.source.SourceTrackId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -141,18 +144,22 @@ class NeteaseProvider(private val http: OkHttpClient) : LyricsProvider {
 }
 
 /**
- * Cherche les paroles chez plusieurs fournisseurs, les plus précises d'abord :
- * mot à mot de NetEase (YRC) → LRCLIB (LRC, parfois enrichi) → NetEase à la ligne → paroles simples de LRCLIB.
- * Les paroles synchronisées reçoivent toujours un minutage par mot, estimé quand la source n'en donne pas.
+ * Cherche les paroles chez tous les fournisseurs à la fois et garde les plus précises : minutées au mot
+ * (BetterLyrics, LyricsPlus, NetEase YRC, LRC enrichi de LRCLIB) avant celles minutées à la ligne, puis les
+ * paroles simples. Les paroles synchronisées reçoivent toujours un minutage par mot, estimé quand la source
+ * n'en donne pas.
  */
 class LyricsRepository(
     http: OkHttpClient,
     /** Dossier des paroles gardées avec les titres téléchargés (null : rien n'est gardé). */
     private val offlineDir: File? = null,
 ) {
+    private val better = BetterLyricsProvider(http)
+    private val plus = LyricsPlusProvider(http)
     private val lrclib = LrclibProvider(http)
     private val netease = NeteaseProvider(http)
-    private val providers: List<LyricsProvider> = listOf(netease, lrclib)
+    /** Par ordre de préférence, à précision égale. */
+    private val providers: List<LyricsProvider> = listOf(better, plus, netease, lrclib)
     private val cache = ConcurrentHashMap<String, Lyrics>()
     private val missing = ConcurrentHashMap.newKeySet<String>()
 
@@ -164,25 +171,44 @@ class LyricsRepository(
         cache[track.id]?.let { return it }
         readOffline(track.id)?.let { cache[track.id] = it; return it }
         if (track.id in missing) return null
-        var plain: Lyrics? = null
-        var lineSynced: Lyrics? = null
         var failed = false
-        for (p in providers) {
-            val found = runCatching { p.find(track) }.onFailure { Log.w("UnisonLyrics", "${p.name}", it); failed = true }.getOrNull()
-            if (p === lrclib) plain = lrclib.lastPlain
-            if (p === netease) lineSynced = netease.lastLineSynced
-            if (found != null) return Karaoke.complete(found).also { cache[track.id] = it }
+        val found = coroutineScope {
+            val jobs = providers.map { p ->
+                async {
+                    try {
+                        withTimeoutOrNull(PROVIDER_TIMEOUT_MS) { p.find(track) }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (t: Throwable) {
+                        Log.w("UnisonLyrics", p.name, t)
+                        failed = true
+                        null
+                    }
+                }
+            }
+            val answers = mutableListOf<Lyrics>()
+            for (job in jobs) {
+                val lyrics = job.await() ?: continue
+                // La plus précise arrive : inutile d'attendre les suivantes.
+                if (lyrics.wordSynced) { jobs.forEach { it.cancel() }; return@coroutineScope lyrics }
+                answers += lyrics
+            }
+            answers.firstOrNull { it.synced } ?: netease.lastLineSynced ?: lrclib.lastPlain
         }
-        val best = lineSynced?.let(Karaoke::complete) ?: plain
+        val best = found?.let { if (it.synced) Karaoke.withInterludes(Karaoke.complete(it)) else it }
         // Sans réseau, « introuvable » n'est pas définitif : on réessaiera plus tard.
         return best?.also { cache[track.id] = it } ?: run { if (!failed) missing += track.id; null }
+    }
+
+    private companion object {
+        const val PROVIDER_TIMEOUT_MS = 9_000L
     }
 
     private fun offlineFile(id: String) = offlineDir?.let { File(it, "${SourceTrackId.fileName(id)}.json") }
 
     private suspend fun readOffline(id: String): Lyrics? = withContext(Dispatchers.IO) {
         val f = offlineFile(id)?.takeIf { it.exists() } ?: return@withContext null
-        runCatching { Karaoke.cleaned(json.decodeFromString(Lyrics.serializer(), f.readText())) }.getOrNull()
+        runCatching { Karaoke.withInterludes(Karaoke.cleaned(json.decodeFromString(Lyrics.serializer(), f.readText()))) }.getOrNull()
     }
 
     /** Garde les paroles de [track] sur le téléphone, pour les afficher hors ligne. */

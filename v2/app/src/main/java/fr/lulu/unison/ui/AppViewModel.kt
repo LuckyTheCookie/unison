@@ -10,7 +10,10 @@ import fr.lulu.unison.importer.ImportEntry
 import fr.lulu.unison.importer.ImportUi
 import fr.lulu.unison.artists.ArtistFeed
 import fr.lulu.unison.library.DownloadRow
+import fr.lulu.unison.library.ForYou
+import fr.lulu.unison.library.LibraryEntry
 import fr.lulu.unison.library.LibraryHit
+import fr.lulu.unison.library.LibrarySource
 import fr.lulu.unison.library.LibraryMix
 import fr.lulu.unison.library.LibrarySearch
 import fr.lulu.unison.library.SubscriptionRow
@@ -50,7 +53,14 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
@@ -135,6 +145,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val favorites: StateFlow<List<Track>> = library.favorites.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val favoriteIds: StateFlow<Set<String>> = library.favoriteIds.stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
     val history: StateFlow<List<Track>> = library.history.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val mostPlayed: StateFlow<List<Track>> = library.mostPlayed.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val _forYou = MutableStateFlow<List<Track>>(emptyList())
+    /** « Pour toi » : titres proches de ce que l'utilisateur écoute, qu'il ne connaît pas encore. */
+    val forYou: StateFlow<List<Track>> = _forYou.asStateFlow()
+
+    private fun loadForYou() = viewModelScope.launch {
+        val cached = graph.forYouCache.read()
+        if (cached != null) {
+            _forYou.value = cached.second
+            if (System.currentTimeMillis() - cached.first < FOR_YOU_TTL_MS) return@launch
+        }
+        val most = runCatching { library.mostPlayed.first() }.getOrDefault(emptyList()).take(3)
+        val favs = runCatching { library.favorites.first() }.getOrDefault(emptyList()).shuffled().take(3)
+        val seeds = (most + favs).distinctBy { it.id }.take(5)
+        if (seeds.isEmpty()) return@launch
+        val radios = coroutineScope {
+            seeds.map { seed -> async { withTimeoutOrNull(8_000) { runCatching { catalog.radio(seed.id) }.getOrNull() }.orEmpty() } }.awaitAll()
+        }
+        val known = runCatching { library.favoriteIds.first() }.getOrDefault(emptySet()) +
+            runCatching { library.history.first() }.getOrDefault(emptyList()).map { it.id } + seeds.map { it.id }
+        val picks = withContext(Dispatchers.Default) { ForYou.pick(radios, known) }
+        if (picks.size >= 6) {
+            _forYou.value = picks
+            graph.forYouCache.write(picks)
+        }
+    }
     val playlists: StateFlow<List<PlaylistSummary>> = library.playlists.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val saved: StateFlow<List<SavedRow>> = library.saved.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -317,6 +354,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadHome() {
         // « Réessayer » recharge aussi « Tes artistes », resté vide si l'app a démarré sans réseau.
         loadArtistFeed()
+        loadForYou()
         viewModelScope.launch {
             // Le dernier accueil reçu s'affiche tout de suite ; le nouveau le remplace dès qu'il arrive.
             if (_home.value !is Load.Ready) _home.value = graph.homeCache.read()?.let { Load.Ready(it) } ?: Load.Loading
@@ -354,7 +392,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         .transformLatest { q ->
             if (q.isBlank()) { emit(null); return@transformLatest }
             delay(120)
-            val entries = runCatching { library.entries() }.getOrDefault(emptyList())
+            // Les albums enregistrés déjà ouverts (ou passés dans un mix) sont cherchés aussi, sans réseau.
+            val entries = runCatching { library.entries() }.getOrDefault(emptyList()) + savedEntries(fetch = false)
             emit(withContext(Dispatchers.Default) { LibrarySearch.search(q, entries) })
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -374,8 +413,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _mixing.value = true
         viewModelScope.launch {
             try {
-                val entries = runCatching { library.entries() }.getOrDefault(emptyList())
                 val offline = !online.value
+                val entries = runCatching { library.entries() }.getOrDefault(emptyList()) + savedEntries(fetch = !offline)
                 val ready = if (offline) downloadStatus.value.filterValues { it.done }.keys else null
                 val mix = withContext(Dispatchers.Default) { LibraryMix.build(entries, onlyIds = ready) }
                 when {
@@ -386,6 +425,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 _mixing.value = false
             }
+        }
+    }
+
+    /**
+     * Titres des albums et playlists YouTube Music enregistrés : demandés au catalogue (quatre à la fois),
+     * gardés pour la session. Hors ligne, seuls ceux déjà connus.
+     */
+    private suspend fun savedEntries(fetch: Boolean): List<LibraryEntry> {
+        val saved = runCatching { library.saved.first() }.getOrDefault(emptyList())
+        if (saved.isEmpty()) return emptyList()
+        val gate = Semaphore(4)
+        return coroutineScope {
+            saved.map { row ->
+                async {
+                    val page = collections[row.browseId] ?: if (!fetch) null else gate.withPermit {
+                        withTimeoutOrNull(8_000) { runCatching { catalog.collection(row.browseId) }.getOrNull() }
+                    }?.also { collections[row.browseId] = it }
+                    page?.tracks.orEmpty().map { LibraryEntry(it, LibrarySource.Saved(row.title)) }
+                }
+            }.awaitAll().flatten()
         }
     }
 
@@ -579,5 +638,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val OFFLINE = "Vérifie ta connexion, puis réessaie."
+        /** « Pour toi » est recalculé au plus deux fois par jour : les radios bougent peu d'une heure à l'autre. */
+        const val FOR_YOU_TTL_MS = 12 * 3_600_000L
     }
 }

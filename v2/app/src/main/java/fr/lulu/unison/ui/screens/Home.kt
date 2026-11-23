@@ -1,7 +1,6 @@
 package fr.lulu.unison.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,29 +20,33 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import fr.lulu.unison.R
+import fr.lulu.unison.library.DownloadState
 import fr.lulu.unison.model.Track
 import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.Load
 import fr.lulu.unison.ui.LocalBottomInset
 import fr.lulu.unison.ui.LocalNav
-import fr.lulu.unison.ui.components.RollingText
-import fr.lulu.unison.ui.components.SkeletonSection
 import fr.lulu.unison.ui.components.Avatar
-import fr.lulu.unison.ui.components.CenterBox
 import fr.lulu.unison.ui.components.Cover
 import fr.lulu.unison.ui.components.Glyph
 import fr.lulu.unison.ui.components.IconBtn
 import fr.lulu.unison.ui.components.Notice
+import fr.lulu.unison.ui.components.RollingText
 import fr.lulu.unison.ui.components.SectionHeader
+import fr.lulu.unison.ui.components.SkeletonSection
 import fr.lulu.unison.ui.components.Spinner
 import fr.lulu.unison.ui.components.pressable
 import fr.lulu.unison.ui.theme.Ink
@@ -60,24 +63,101 @@ private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_
     else -> "Bonsoir"
 }
 
+/** Raccourci de l'accueil : une pochette, un titre, et ce qu'il fait au toucher. */
+private class Shortcut(
+    val key: String,
+    val title: String,
+    val subtitle: String,
+    val onClick: () -> Unit,
+    val cover: @Composable () -> Unit,
+)
+
+/**
+ * Accueil centré sur l'utilisateur : ses raccourcis (Mix, plus écoutés, favoris, playlists, albums), ce qu'il
+ * réécoute, une sélection « Pour toi » tirée de ses goûts, ses artistes. Les recommandations génériques de
+ * YouTube Music ne viennent qu'à la fin, deux sections au plus, sauf pour une bibliothèque encore vide.
+ */
 @Composable
 fun HomeScreen(vm: AppViewModel) {
     val nav = LocalNav.current
     val home by vm.home.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle()
+    val favorites by vm.favorites.collectAsStateWithLifecycle()
+    val mostPlayed by vm.mostPlayed.collectAsStateWithLifecycle()
+    val forYou by vm.forYou.collectAsStateWithLifecycle()
+    val playlists by vm.playlists.collectAsStateWithLifecycle()
+    val saved by vm.saved.collectAsStateWithLifecycle()
+    val downloads by vm.downloadRows.collectAsStateWithLifecycle()
+    val mixing by vm.mixing.collectAsStateWithLifecycle()
     val session by vm.sessionSummary.collectAsStateWithLifecycle()
-    val join by vm.joinInfo.collectAsStateWithLifecycle()
+    val profile by vm.profile.collectAsStateWithLifecycle()
     val artistFeed by vm.artistFeed.collectAsStateWithLifecycle()
     val hello = remember { greeting() }
+    val haptics = LocalHapticFeedback.current
+
+    val downloaded = downloads.count { it.state == DownloadState.DONE }
+    val shortcuts = buildList {
+        add(Shortcut("mix", "Mix", if (mixing) "Préparation…" else "Ta bibliothèque mélangée", onClick = {
+            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+            vm.playMix()
+        }) { MixCover(mixing) })
+        if (mostPlayed.size >= 5) add(Shortcut("most", "Les plus écoutés", plural(mostPlayed.size, "titre"), onClick = { vm.playAll(mostPlayed) }) {
+            GeneratedCover(R.drawable.ic_sparkles_fill, HistoryColors, TILE)
+        })
+        if (favorites.isNotEmpty()) add(Shortcut("fav", "Favoris", plural(favorites.size, "titre"), onClick = nav.favorites) {
+            GeneratedCover(R.drawable.ic_heart_fill, FavoritesColors, TILE)
+        })
+        if (downloaded > 0) add(Shortcut("dl", "Téléchargements", plural(downloaded, "titre"), onClick = nav.downloads) {
+            GeneratedCover(R.drawable.ic_downloaded_fill, DownloadsColors, TILE)
+        })
+        playlists.take(4).forEach { p ->
+            add(Shortcut("p${p.pid}", p.name, plural(p.count, "titre"), onClick = { nav.playlist(p.pid) }) {
+                if (p.cover.isNullOrBlank()) GeneratedCover(R.drawable.ic_queue_line, PlaylistColors, TILE) else Cover(p.cover, TILE, shape = Radius.Control)
+            })
+        }
+        saved.forEach { s ->
+            add(Shortcut("s${s.browseId}", s.title, s.subtitle.ifBlank { if (s.isAlbum) "Album" else "Playlist" }, onClick = { nav.collection(s.browseId) }) {
+                Cover(s.thumbnail, TILE, shape = Radius.Control)
+            })
+        }
+    }.take(8).let { if (it.size % 2 == 1 && it.size > 1) it.dropLast(1) else it }
+    // Bibliothèque déjà fournie : les suggestions génériques passent au second plan.
+    val personal = history.size >= 5 || favorites.size >= 3 || playlists.isNotEmpty()
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {
         item(key = "head", contentType = "head") {
-            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 10.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(hello, style = Type.Hero, color = Ink.Primary, modifier = Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 6.dp, top = 14.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                profile?.let { Avatar(it.name, it.color, 42.dp, Modifier.pressable(scale = 0.92f, onClick = nav.settings)) }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(hello + ",", style = Type.Label, color = Ink.Secondary)
+                    Text(profile?.name.orEmpty(), style = Type.Heading, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Box(contentAlignment = Alignment.TopEnd) {
+                    IconBtn(
+                        if (session.shared) R.drawable.ic_group_fill else R.drawable.ic_group_line, "Écouter ensemble", nav.together,
+                        tint = if (session.shared) Ink.Accent else Ink.Secondary,
+                    )
+                    if (session.shared) Box(Modifier.padding(top = 9.dp, end = 9.dp).size(8.dp).clip(CircleShape).background(Ink.Accent))
+                }
                 IconBtn(R.drawable.ic_settings_line, "Réglages", nav.settings, tint = Ink.Secondary)
             }
         }
-        item(key = "together", contentType = "together") { TogetherCard(shared = join != null, members = session.members, hostName = session.hostName, isHost = vm.isHost, onClick = nav.together) }
+        if (session.shared) {
+            item(key = "session", contentType = "session") { SessionPill(session.members, session.hostName, vm.isHost, nav.together) }
+        }
+        if (shortcuts.isNotEmpty()) {
+            item(key = "shortcuts", contentType = "shortcuts") {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    shortcuts.chunked(2).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            row.forEach { s -> ShortcutTile(s, Modifier.weight(1f)) }
+                            if (row.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
 
         if (history.isNotEmpty()) {
             item(key = "recent", contentType = "row") {
@@ -87,6 +167,9 @@ fun HomeScreen(vm: AppViewModel) {
                     items(recent, key = { it.id }) { track -> RecentCard(track, onClick = { vm.play(recent, recent.indexOf(track)) }, onLong = { nav.trackMenu(track) }) }
                 }
             }
+        }
+        if (forYou.size >= 3) {
+            item(key = "for-you", contentType = "section") { SectionBlock(Section("Pour toi", forYou.map { SongItem(it) }), vm) }
         }
 
         artistFeed?.let { feed ->
@@ -98,17 +181,76 @@ fun HomeScreen(vm: AppViewModel) {
                     }
                 }
             }
-            if (feed.popular.size >= 3) item(key = "mine-songs", contentType = "section") { SectionBlock(Section("Titres de tes artistes", feed.popular.map { SongItem(it) }), vm) }
             if (feed.releases.isNotEmpty()) item(key = "mine-new", contentType = "section") { SectionBlock(Section("Sorties de tes artistes", feed.releases), vm) }
+            if (feed.popular.size >= 3) item(key = "mine-songs", contentType = "section") { SectionBlock(Section("Titres de tes artistes", feed.popular.map { SongItem(it) }), vm) }
         }
 
         when (val h = home) {
-            Load.Loading -> item(key = "loading") { Column { repeat(3) { SkeletonSection() } } }
-            is Load.Failed -> item(key = "failed") {
+            Load.Loading -> if (!personal) item(key = "loading") { Column { repeat(3) { SkeletonSection() } } }
+            is Load.Failed -> if (!personal) item(key = "failed") {
                 Notice("YouTube Music ne répond pas", detail = h.message, icon = R.drawable.ic_wifi_line, action = "Réessayer", onAction = vm::loadHome)
             }
-            is Load.Ready -> items(h.value, key = { "s:" + it.title }, contentType = { "section" }) { section -> SectionBlock(section, vm) }
+            is Load.Ready -> {
+                val sections = if (personal) h.value.take(2) else h.value
+                if (personal && sections.isNotEmpty()) item(key = "discover", contentType = "head") {
+                    Text(
+                        "À découvrir", style = Type.Caption, color = Ink.Tertiary,
+                        modifier = Modifier.padding(start = 20.dp, top = 30.dp),
+                    )
+                }
+                items(sections, key = { "s:" + it.title }, contentType = { "section" }) { section -> SectionBlock(section, vm) }
+            }
         }
+    }
+}
+
+private val TILE = 56.dp
+
+private fun plural(n: Int, word: String) = if (n == 1) "1 $word" else "$n ${word}s"
+
+@Composable
+private fun ShortcutTile(s: Shortcut, modifier: Modifier = Modifier) {
+    Row(
+        modifier.height(TILE).clip(Radius.Item).background(Ink.Fill).pressable(scale = 0.97f, onClick = s.onClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        s.cover()
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(s.title, style = Type.Label, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(s.subtitle, style = Type.Caption, color = Ink.Tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+private val MixTileColors = listOf(Color(0xFF8B5CF6), Color(0xFFEC4899), Color(0xFF14B8A6))
+
+@Composable
+private fun MixCover(mixing: Boolean) {
+    Box(Modifier.size(TILE).clip(Radius.Control).background(Brush.linearGradient(MixTileColors)), contentAlignment = Alignment.Center) {
+        if (mixing) Spinner(size = 22.dp, color = Color.White) else Glyph(R.drawable.ic_sparkles_fill, tint = Color.White, size = 24.dp)
+    }
+}
+
+/** Session ouverte : rappel discret sous l'en-tête, qui mène à « Écouter ensemble ». */
+@Composable
+private fun SessionPill(members: Int, hostName: String, isHost: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.padding(horizontal = 12.dp, vertical = 4.dp).fillMaxWidth().clip(Radius.Pill).background(Ink.FillStrong)
+            .pressable(scale = 0.98f, onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(Ink.Accent))
+        Spacer(Modifier.width(10.dp))
+        RollingText(
+            when {
+                isHost && members < 2 -> "Ta session est ouverte · en attente d'invités"
+                isHost -> "Ta session · $members personnes"
+                else -> "Session de $hostName · $members personnes"
+            },
+            style = Type.Label, color = Ink.Primary, maxLines = 1, modifier = Modifier.weight(1f),
+        )
+        Glyph(R.drawable.ic_right_line, tint = Ink.Tertiary, size = 18.dp)
     }
 }
 
@@ -120,45 +262,4 @@ private fun RecentCard(track: Track, onClick: () -> Unit, onLong: () -> Unit) {
         Text(track.title, style = Type.Label, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(track.artist, style = Type.Caption, color = Ink.Tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
-}
-
-/** Entrée vers « Écouter ensemble » ; résume la session quand il y en a une. */
-@Composable
-private fun TogetherCard(shared: Boolean, members: Int, hostName: String, isHost: Boolean, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)
-            .clip(Radius.Panel).background(if (shared) Ink.FillStrong else Ink.Fill).border(0.5.dp, Ink.Hairline, Radius.Panel)
-            .pressable(scale = 0.985f, onClick = onClick).padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(44.dp).clip(CircleShape).background(if (shared) Ink.Accent else Ink.FillHover), contentAlignment = Alignment.Center) {
-            Glyph(R.drawable.ic_group_fill, tint = if (shared) androidx.compose.ui.graphics.Color.Black else Ink.Primary, size = 22.dp)
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                when {
-                    !shared -> "Écouter ensemble"
-                    isHost -> "Ta session est ouverte"
-                    else -> "Session de $hostName"
-                },
-                style = Type.Title, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
-            RollingText(
-                when {
-                    !shared -> "La même musique, au même instant, sur plusieurs téléphones"
-                    members < 2 -> "En attente d'invités"
-                    else -> "$members personnes écoutent"
-                },
-                style = Type.Body, color = Ink.Secondary, maxLines = 2,
-            )
-        }
-        Glyph(R.drawable.ic_right_line, tint = Ink.Tertiary, size = 20.dp)
-    }
-}
-
-@Suppress("unused")
-@Composable
-private fun MemberDots(names: List<Pair<String, Int>>) {
-    Row { names.take(4).forEach { (n, c) -> Avatar(n, c, 22.dp, Modifier.padding(end = 2.dp)) } }
 }
