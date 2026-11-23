@@ -19,7 +19,7 @@ javaWebsocket = "1.6.0"
 okhttp = "5.5.1"
 coil = "3.6.3"
 zxing = "3.5.4"
-mlkitBarcode = "17.3.0"
+mlkitBarcode = "18.3.1"
 camerax = "1.6.0"
 nearby = "19.5.1"
 backdrop = "2.0.1"
@@ -67,7 +67,7 @@ okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
-mlkit-barcode = { module = "com.google.mlkit:barcode-scanning", version.ref = "mlkitBarcode" }
+mlkit-barcode = { module = "com.google.android.gms:play-services-mlkit-barcode-scanning", version.ref = "mlkitBarcode" }
 camerax-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
 camerax-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
 camerax-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }

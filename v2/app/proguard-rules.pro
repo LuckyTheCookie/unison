@@ -4,18 +4,9 @@
 -keep class fr.lulu.unison.model.** { *; }
 -keep class fr.lulu.unison.session.Msg* { *; }
 -keep class fr.lulu.unison.session.Cmd* { *; }
-# Bibliothèques Google (ML Kit, Nearby, Play Services) : R8 casse leur code interne
--keep class com.google.mlkit.** { *; }
--keep class com.google.android.gms.** { *; }
--keep class com.google.firebase.components.** { *; }
--keep class com.google.android.odml.** { *; }
+# Bibliothèques Google (ML Kit, Nearby, Play Services) : elles fournissent leurs propres règles.
 -dontwarn com.google.android.gms.**
-# Serveur WebSocket (et sa dépendance de journalisation SLF4J)
--keep class org.java_websocket.** { *; }
--keep class org.slf4j.** { *; }
--keep class okhttp3.** { *; }
 -dontwarn okhttp3.**
--keep class fr.lulu.unison.lyrics.** { *; }
 # Moteur YouTube Music (InnerTubeX) : modèles sérialisés et solveur de signature
 -keep class com.metrolist.innertubex.** { *; }
 -keep class com.metrolist.quackjs.** { *; }
