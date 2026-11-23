@@ -1,9 +1,9 @@
 package fr.lulu.unison.ui.components
 
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
@@ -33,8 +33,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,6 +68,7 @@ import fr.lulu.unison.model.Track
 import fr.lulu.unison.offline.DownloadStatus
 import fr.lulu.unison.offline.OfflineArt
 import fr.lulu.unison.ui.LocalDownloads
+import fr.lulu.unison.ui.LocalReduceMotion
 import fr.lulu.unison.ui.theme.Ink
 import fr.lulu.unison.ui.theme.Radius
 import fr.lulu.unison.ui.theme.Type
@@ -119,18 +132,32 @@ fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, shape: Shape = 
  */
 @Composable
 fun DownloadBadge(status: DownloadStatus?, size: Dp = 14.dp, modifier: Modifier = Modifier) {
+    // L'anneau qui se change en coche fait un petit « pop » ; une ligne déjà téléchargée n'en fait pas.
+    val wasRunning = remember { booleanArrayOf(false) }
+    val pop = remember { Animatable(1f) }
+    val reduce = LocalReduceMotion.current
+    val done = status?.done == true
+    LaunchedEffect(done) {
+        if (done && wasRunning[0] && !reduce) {
+            pop.snapTo(0.3f)
+            pop.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 500f))
+        }
+    }
     when {
         status == null || status.state == DownloadState.FAILED -> Unit
-        status.done -> Glyph(R.drawable.ic_downloaded_fill, modifier.padding(end = 6.dp), tint = Ink.Accent, size = size)
-        else -> androidx.compose.foundation.Canvas(modifier.padding(end = 6.dp).size(size)) {
-            val stroke = this.size.minDimension * 0.16f
-            val inset = stroke / 2
-            val arc = androidx.compose.ui.geometry.Size(this.size.width - stroke, this.size.height - stroke)
-            val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
-            val style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-            drawArc(Ink.FillStrong, 0f, 360f, false, topLeft, arc, style = style)
-            val paused = status.state == DownloadState.PAUSED
-            drawArc(if (paused) Ink.Tertiary else Ink.Accent, -90f, 360f * status.progress.coerceAtLeast(0.04f), false, topLeft, arc, style = style)
+        done -> Glyph(R.drawable.ic_downloaded_fill, modifier.padding(end = 6.dp).graphicsLayer { scaleX = pop.value; scaleY = pop.value }, tint = Ink.Accent, size = size)
+        else -> {
+            wasRunning[0] = true
+            androidx.compose.foundation.Canvas(modifier.padding(end = 6.dp).size(size)) {
+                val stroke = this.size.minDimension * 0.16f
+                val inset = stroke / 2
+                val arc = androidx.compose.ui.geometry.Size(this.size.width - stroke, this.size.height - stroke)
+                val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
+                val style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                drawArc(Ink.FillStrong, 0f, 360f, false, topLeft, arc, style = style)
+                val paused = status.state == DownloadState.PAUSED
+                drawArc(if (paused) Ink.Tertiary else Ink.Accent, -90f, 360f * status.progress.coerceAtLeast(0.04f), false, topLeft, arc, style = style)
+            }
         }
     }
 }
@@ -161,7 +188,10 @@ fun PlayingBars(active: Boolean, modifier: Modifier = Modifier, color: Color = I
     }
 }
 
-/** Ligne de titre : 64 dp, pochette, titre et artiste, durée, menu. */
+/**
+ * Ligne de titre : 64 dp, pochette, titre et artiste, durée, menu. Avec [onSwipe], la ligne se glisse vers la
+ * droite pour « Lire ensuite » (un cran haptique au seuil) ; à ne pas utiliser dans une liste horizontale.
+ */
 @Composable
 fun TrackRow(
     track: Track,
@@ -173,42 +203,100 @@ fun TrackRow(
     playing: Boolean = false,
     subtitle: String = track.artist,
     onMore: (() -> Unit)? = null,
+    onSwipe: (() -> Unit)? = null,
     trailing: @Composable (RowScope.() -> Unit)? = null,
 ) {
-    Row(
-        modifier.fillMaxWidth().height(64.dp).pressable(scale = 0.985f, onLongClick = onMore, onClick = onClick).padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (index != null) {
-            Box(Modifier.width(34.dp), contentAlignment = Alignment.Center) {
-                if (current) PlayingBars(playing) else Text("$index", style = Type.Label, color = Ink.Tertiary)
-            }
+    val offset = remember { Animatable(0f) }
+    val threshold = with(LocalDensity.current) { SWIPE_THRESHOLD.toPx() }
+    Box(modifier.fillMaxWidth().height(64.dp)) {
+        if (onSwipe != null) {
+            Box(
+                Modifier.matchParentSize().padding(start = 24.dp).graphicsLayer {
+                    val p = (offset.value / threshold).coerceIn(0f, 1f)
+                    alpha = p
+                    scaleX = 0.6f + 0.4f * p; scaleY = scaleX
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+                },
+                contentAlignment = Alignment.CenterStart,
+            ) { Glyph(R.drawable.ic_queue_line, tint = Ink.Accent, size = 24.dp) }
         }
-        if (showCover) {
-            Box(contentAlignment = Alignment.Center) {
-                Cover(track.cover, 46.dp, shape = RoundedCornerShape(8.dp))
-                if (current && index == null) {
-                    Box(Modifier.size(46.dp).clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
-                        PlayingBars(playing)
-                    }
+        Row(
+            Modifier.fillMaxSize()
+                .then(if (onSwipe != null) Modifier.swipeToAct(offset, threshold, "Lire ensuite", onSwipe) else Modifier)
+                .pressable(scale = 0.985f, onLongClick = onMore, onClick = onClick).padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (index != null) {
+                Box(Modifier.width(34.dp), contentAlignment = Alignment.Center) {
+                    if (current) PlayingBars(playing) else Text("$index", style = Type.Label, color = Ink.Tertiary)
                 }
             }
-            Spacer(Modifier.width(12.dp))
-        }
-        Column(Modifier.weight(1f)) {
-            Text(track.title, style = Type.Row, color = if (current) Ink.Accent else Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                DownloadBadge(LocalDownloads.current[track.id])
-                if (track.explicit) ExplicitBadge()
-                Text(subtitle, style = Type.Body, color = Ink.Tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (showCover) {
+                Box(contentAlignment = Alignment.Center) {
+                    Cover(track.cover, 46.dp, shape = RoundedCornerShape(8.dp))
+                    if (current && index == null) {
+                        Box(Modifier.size(46.dp).clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
+                            PlayingBars(playing)
+                        }
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(track.title, style = Type.Row, color = if (current) Ink.Accent else Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DownloadBadge(LocalDownloads.current[track.id])
+                    if (track.explicit) ExplicitBadge()
+                    Text(subtitle, style = Type.Body, color = Ink.Tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (trailing != null) trailing()
+            else {
+                if (track.durationMs > 0) Text(formatTime(track.durationMs), style = Type.Time, color = Ink.Tertiary, modifier = Modifier.padding(start = 10.dp))
+                if (onMore != null) IconBtn(R.drawable.ic_more_line, "Plus d'options", onMore, size = 40.dp, iconSize = 20.dp, tint = Ink.Secondary)
             }
         }
-        if (trailing != null) trailing()
-        else {
-            if (track.durationMs > 0) Text(formatTime(track.durationMs), style = Type.Time, color = Ink.Tertiary, modifier = Modifier.padding(start = 10.dp))
-            if (onMore != null) IconBtn(R.drawable.ic_more_line, "Plus d'options", onMore, size = 40.dp, iconSize = 20.dp, tint = Ink.Secondary)
-        }
     }
+}
+
+private val SWIPE_THRESHOLD = 80.dp
+
+/**
+ * Glisser vers la droite : la ligne suit le doigt, résiste passé [threshold] (avec un cran haptique), puis
+ * revient en ressort ; l'action part si le geste finit au-delà du seuil. Aussi proposée à TalkBack.
+ */
+@Composable
+private fun Modifier.swipeToAct(offset: Animatable<Float, androidx.compose.animation.core.AnimationVector1D>, threshold: Float, label: String, onAct: () -> Unit): Modifier {
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    val act by rememberUpdatedState(onAct)
+    val back = spring<Float>(dampingRatio = 0.7f, stiffness = 420f)
+    return this
+        .semantics { customActions = listOf(CustomAccessibilityAction(label) { act(); true }) }
+        .graphicsLayer { translationX = offset.value }
+        .pointerInput(threshold) {
+            var crossed = false
+            detectHorizontalDragGestures(
+                onDragStart = { crossed = false },
+                onDragEnd = {
+                    scope.launch {
+                        if (offset.value >= threshold) act()
+                        offset.animateTo(0f, back)
+                    }
+                },
+                onDragCancel = { scope.launch { offset.animateTo(0f, back) } },
+            ) { change, dx ->
+                val x = offset.value
+                val next = (x + dx * if (x > threshold) 0.3f else 1f).coerceAtLeast(0f)
+                if (next > 0f || dx > 0f) change.consume()
+                scope.launch { offset.snapTo(next) }
+                val over = next >= threshold
+                if (over != crossed) {
+                    crossed = over
+                    if (over) haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                }
+            }
+        }
 }
 
 /** Panneau de verre : remplissage blanc à faible opacité, liseré discret. */

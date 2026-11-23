@@ -165,6 +165,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         messageJob = viewModelScope.launch { delay(2_600); _message.value = null }
     }
 
+    /** Le message est balayé avant la fin de son délai. */
+    fun dismissMessage() {
+        messageJob?.cancel()
+        _message.value = null
+    }
+
     fun onResume() = updates.resumeAfterPermission()
 
     // --- Lecture ---

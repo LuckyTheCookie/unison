@@ -14,6 +14,28 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.IntOffset
+import fr.lulu.unison.ui.components.PlayPauseButton
+import kotlinx.coroutines.launch
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -296,14 +318,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
             }
 
             Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp).padding(bottom = 8.dp)) {
-                AnimatedVisibility(message != null, enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut()) {
-                    Box(Modifier.fillMaxWidth().padding(bottom = 8.dp), contentAlignment = Alignment.Center) {
-                        Text(
-                            message.orEmpty(), style = Type.Label, color = Ink.ButtonText,
-                            modifier = Modifier.clip(Radius.Pill).background(Ink.ButtonBg).padding(horizontal = 16.dp, vertical = 10.dp),
-                        )
-                    }
-                }
+                Toast(message, settings.reduceMotion, onDismiss = vm::dismissMessage)
                 current?.let { item ->
                     MiniPlayer(vm, item.track, backdrop, onOpen = { playerPage = PlayerPage.Art; playerOpen = true })
                     Spacer(Modifier.height(8.dp))
@@ -363,18 +378,33 @@ private fun MiniPlayer(vm: AppViewModel, track: Track, backdrop: Backdrop, onOpe
             }
             .pressable(scale = 0.985f, onClick = onOpen),
     ) {
+        val reduce = LocalReduceMotion.current
         Row(Modifier.fillMaxSize().padding(start = 9.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Cover(track.cover, 46.dp, shape = Radius.Control)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(track.title, style = Type.Row, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // Au changement de titre, pochette et texte glissent : on voit que la musique a changé.
+            AnimatedContent(
+                track,
+                contentKey = { it.id },
+                modifier = Modifier.weight(1f),
+                transitionSpec = {
+                    if (reduce) EnterTransition.None togetherWith ExitTransition.None
+                    else (slideInHorizontally(tween(Motion.Page, easing = Motion.Ease)) { it / 3 } + fadeIn(tween(Motion.Page))) togetherWith
+                        (slideOutHorizontally(tween(Motion.Page, easing = Motion.Ease)) { -it / 3 } + fadeOut(tween(Motion.Fast)))
+                },
+                label = "titre",
+            ) { t ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (player.error == null) fr.lulu.unison.ui.components.DownloadBadge(LocalDownloads.current[track.id])
-                    Text(player.error ?: track.artist, style = Type.Body, color = if (player.error != null) Ink.Danger else Ink.Secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Cover(t.cover, 46.dp, shape = Radius.Control)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(t.title, style = Type.Row, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (player.error == null) fr.lulu.unison.ui.components.DownloadBadge(LocalDownloads.current[t.id])
+                            Text(player.error ?: t.artist, style = Type.Body, color = if (player.error != null) Ink.Danger else Ink.Secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
             }
-            if (player.buffering && playing) Box(Modifier.width(44.dp), contentAlignment = Alignment.Center) { Spinner(size = 22.dp) }
-            else IconBtn(if (playing) R.drawable.ic_pause_fill else R.drawable.ic_play_fill, if (playing) "Pause" else "Lecture", vm::togglePlay, iconSize = 26.dp)
+            PlayPauseButton(playing, buffering = player.buffering && playing, onClick = vm::togglePlay, modifier = Modifier.size(44.dp), iconSize = 26.dp)
             IconBtn(R.drawable.ic_next_fill, "Suivant", { vm.send(Cmd.Skip) }, iconSize = 24.dp)
         }
         if (duration > 0) {
@@ -390,25 +420,102 @@ private fun MiniPlayer(vm: AppViewModel, track: Track, backdrop: Backdrop, onOpe
     }
 }
 
+/**
+ * Message bref : il entre en ressort par le bas et se balaie vers le bas. Le dernier texte reste affiché
+ * pendant sa sortie, au lieu de disparaître avant elle.
+ */
+@Composable
+private fun Toast(message: String?, reduce: Boolean, onDismiss: () -> Unit) {
+    val last = remember { arrayOf("") }
+    message?.let { last[0] = it }
+    val pop = spring<Float>(dampingRatio = 0.7f, stiffness = 420f)
+    AnimatedVisibility(
+        message != null,
+        enter = if (reduce) fadeIn() else slideInVertically(spring(dampingRatio = 0.7f, stiffness = 420f)) { it } + scaleIn(pop, initialScale = 0.9f) + fadeIn(tween(120)),
+        exit = if (reduce) fadeOut() else fadeOut(tween(Motion.Fast)) + slideOutVertically(tween(Motion.Page)) { it / 2 } + scaleOut(tween(Motion.Page), targetScale = 0.95f),
+    ) {
+        val drag = remember { Animatable(0f) }
+        val scope = rememberCoroutineScope()
+        Box(Modifier.fillMaxWidth().padding(bottom = 8.dp), contentAlignment = Alignment.Center) {
+            Text(
+                last[0], style = Type.Label, color = Ink.ButtonText,
+                modifier = Modifier
+                    .graphicsLayer {
+                        translationY = drag.value
+                        alpha = 1f - (drag.value / 240f).coerceIn(0f, 0.7f)
+                    }
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragEnd = { if (drag.value > 48f) onDismiss() else scope.launch { drag.animateTo(0f, pop) } },
+                            onDragCancel = { scope.launch { drag.animateTo(0f, pop) } },
+                        ) { change, dy ->
+                            change.consume()
+                            scope.launch { drag.snapTo((drag.value + dy).coerceAtLeast(0f)) }
+                        }
+                    }
+                    .clip(Radius.Pill).background(Ink.ButtonBg).padding(horizontal = 16.dp, vertical = 10.dp),
+            )
+        }
+    }
+}
+
+/** Barre d'onglets : une pastille glisse en ressort sous l'onglet choisi, dont l'icône rebondit. */
 @Composable
 private fun BottomBar(navController: NavHostController, backdrop: Backdrop) {
     val entry by navController.currentBackStackEntryAsState()
     val route = entry?.destination?.route
-    Row(Modifier.fillMaxWidth().height(60.dp).clip(Radius.Panel).glassBar(backdrop, Radius.Panel), verticalAlignment = Alignment.CenterVertically) {
-        Tab.entries.forEach { tab ->
-            val selected = route == tab.route
-            Column(
-                Modifier.weight(1f).pressable(scale = 0.92f) {
-                    if (!selected) navController.navigate(tab.route) {
-                        popUpTo(Tab.Home.route) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
-                    } else Unit
-                },
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Glyph(if (selected) tab.fill else tab.line, tint = if (selected) Ink.Primary else Ink.Tertiary, size = 24.dp)
-                Text(tab.label, style = Type.Caption, color = if (selected) Ink.Primary else Ink.Tertiary, modifier = Modifier.padding(top = 2.dp))
+    val selected = Tab.entries.indexOfFirst { it.route == route }
+    // Hors des onglets (album, réglages…), la pastille s'efface sur place.
+    val lastSelected = remember { intArrayOf(0) }
+    if (selected >= 0) lastSelected[0] = selected
+    val reduce = LocalReduceMotion.current
+    val haptics = LocalHapticFeedback.current
+    val pillAlpha by animateFloatAsState(if (selected >= 0) 1f else 0f, tween(Motion.Fast), label = "pastille")
+    BoxWithConstraints(Modifier.fillMaxWidth().height(60.dp).clip(Radius.Panel).glassBar(backdrop, Radius.Panel)) {
+        val tabWidth = maxWidth / Tab.entries.size
+        val x by animateDpAsState(
+            tabWidth * lastSelected[0],
+            if (reduce) snap() else spring(dampingRatio = 0.72f, stiffness = 380f),
+            label = "onglet",
+        )
+        Box(
+            Modifier.offset { IntOffset(x.roundToPx(), 0) }.width(tabWidth).fillMaxHeight()
+                .padding(horizontal = 14.dp, vertical = 7.dp)
+                .graphicsLayer { alpha = pillAlpha }
+                .clip(Radius.Item).background(Ink.Fill),
+        )
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            Tab.entries.forEach { tab ->
+                val isSelected = route == tab.route
+                val bounce = remember { Animatable(1f) }
+                val was = remember { booleanArrayOf(isSelected) }
+                LaunchedEffect(isSelected) {
+                    if (isSelected && !was[0] && !reduce) {
+                        bounce.snapTo(0.82f)
+                        bounce.animateTo(1f, spring(dampingRatio = 0.35f, stiffness = 520f))
+                    }
+                    was[0] = isSelected
+                }
+                Column(
+                    Modifier.weight(1f).pressable(scale = 0.92f) {
+                        if (!isSelected) {
+                            haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                            navController.navigate(tab.route) {
+                                popUpTo(Tab.Home.route) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Glyph(
+                        if (isSelected) tab.fill else tab.line,
+                        Modifier.graphicsLayer { scaleX = bounce.value; scaleY = bounce.value },
+                        tint = if (isSelected) Ink.Primary else Ink.Tertiary, size = 24.dp,
+                    )
+                    Text(tab.label, style = Type.Caption, color = if (isSelected) Ink.Primary else Ink.Tertiary, modifier = Modifier.padding(top = 2.dp))
+                }
             }
         }
     }

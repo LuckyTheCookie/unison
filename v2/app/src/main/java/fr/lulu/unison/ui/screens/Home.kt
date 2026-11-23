@@ -35,6 +35,8 @@ import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.Load
 import fr.lulu.unison.ui.LocalBottomInset
 import fr.lulu.unison.ui.LocalNav
+import fr.lulu.unison.ui.components.RollingText
+import fr.lulu.unison.ui.components.SkeletonSection
 import fr.lulu.unison.ui.components.Avatar
 import fr.lulu.unison.ui.components.CenterBox
 import fr.lulu.unison.ui.components.Cover
@@ -101,7 +103,7 @@ fun HomeScreen(vm: AppViewModel) {
         }
 
         when (val h = home) {
-            Load.Loading -> item(key = "loading") { CenterBox { Spinner() } }
+            Load.Loading -> item(key = "loading") { Column { repeat(3) { SkeletonSection() } } }
             is Load.Failed -> item(key = "failed") {
                 Notice("YouTube Music ne répond pas", detail = h.message, icon = R.drawable.ic_wifi_line, action = "Réessayer", onAction = vm::loadHome)
             }
@@ -142,7 +144,7 @@ private fun TogetherCard(shared: Boolean, members: Int, hostName: String, isHost
                 },
                 style = Type.Title, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
-            Text(
+            RollingText(
                 when {
                     !shared -> "La même musique, au même instant, sur plusieurs téléphones"
                     members < 2 -> "En attente d'invités"

@@ -1,6 +1,11 @@
 package fr.lulu.unison
 
 import android.app.Application
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.crossfade
 import fr.lulu.unison.data.Prefs
 import fr.lulu.unison.data.Settings
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -118,7 +123,7 @@ class AppGraph(app: Application) {
     }
 }
 
-class UnisonApp : Application() {
+class UnisonApp : Application(), SingletonImageLoader.Factory {
     lateinit var graph: AppGraph
         private set
 
@@ -126,5 +131,18 @@ class UnisonApp : Application() {
         super.onCreate()
         graph = AppGraph(this)
         graph.start()
+    }
+
+    /**
+     * Chargeur d'images de toute l'app : les pochettes apparaissent en fondu (pas pour une image déjà en
+     * mémoire), et passent par le même client HTTP que le reste.
+     */
+    override fun newImageLoader(context: PlatformContext): ImageLoader = ImageLoader.Builder(context)
+        .crossfade(COVER_FADE_MS)
+        .components { add(OkHttpNetworkFetcherFactory(callFactory = { graph.http })) }
+        .build()
+
+    private companion object {
+        const val COVER_FADE_MS = 180
     }
 }

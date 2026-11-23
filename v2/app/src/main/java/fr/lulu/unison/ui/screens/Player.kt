@@ -51,6 +51,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -109,6 +110,9 @@ import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.LocalNav
 import fr.lulu.unison.ui.LyricsUi
 import fr.lulu.unison.ui.LocalDownloads
+import fr.lulu.unison.ui.components.RollingText
+import fr.lulu.unison.ui.components.PlayPauseButton
+import fr.lulu.unison.ui.components.HeartButton
 import fr.lulu.unison.ui.components.Cover
 import fr.lulu.unison.ui.components.DownloadBadge
 import fr.lulu.unison.ui.components.ExplicitBadge
@@ -215,11 +219,8 @@ fun PlayerScreen(vm: AppViewModel, page: PlayerPage, onPage: (PlayerPage) -> Uni
                     if (picking) PlaylistPicker(listOf(track), vm, onDismiss = { picking = false })
                     IconBtn(R.drawable.ic_add_line, "Ajouter à une playlist", { picking = true }, background = Ink.FillHover)
                     Spacer(Modifier.width(10.dp))
-                    val fav = track.id in favorites
-                    IconBtn(
-                        if (fav) R.drawable.ic_heart_fill else R.drawable.ic_heart_line, "Favori", { vm.toggleFavorite(track) },
-                        tint = if (fav) Ink.Accent else Ink.Primary, background = Ink.FillHover,
-                    )
+                    // Une instance par titre : passer à un titre déjà en favori ne rejoue pas l'animation.
+                    key(track.id) { HeartButton(track.id in favorites, onToggle = { vm.toggleFavorite(track) }) }
                 }
             }
             // Paroles « en petit » : la ligne chantée, au-dessus de la barre, quand la pochette est affichée.
@@ -251,7 +252,8 @@ private fun PageToggle(iconOff: Int, iconOn: Int, label: String, active: Boolean
     ) {
         Glyph(if (active) iconOn else iconOff, tint = if (active) Ink.Primary else Ink.Secondary, size = 20.dp)
         Spacer(Modifier.width(8.dp))
-        Text(label, style = Type.Label, color = if (active) Ink.Primary else Ink.Secondary)
+        // Le nombre de personnes dans la session roule quand quelqu'un arrive ou part.
+        RollingText(label, style = Type.Label, color = if (active) Ink.Primary else Ink.Secondary)
     }
 }
 
@@ -417,6 +419,15 @@ fun SeekBar(vm: AppViewModel, modifier: Modifier = Modifier) {
         label = "bar",
     )
     val enabled = duration > 0
+    val haptics = LocalHapticFeedback.current
+    // Crans haptiques : au début du glisser et en touchant le début ou la fin du titre.
+    var atEdge by remember { mutableStateOf(false) }
+    fun dragTo(fraction: Float) {
+        dragFraction = fraction
+        val edge = fraction <= 0f || fraction >= 1f
+        if (edge && !atEdge) haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+        atEdge = edge
+    }
 
     Column(modifier.fillMaxWidth()) {
         Box(
@@ -428,10 +439,15 @@ fun SeekBar(vm: AppViewModel, modifier: Modifier = Modifier) {
                 .pointerInput(enabled) {
                     if (!enabled) return@pointerInput
                     detectHorizontalDragGestures(
-                        onDragStart = { o -> dragging = true; dragFraction = (o.x / size.width).coerceIn(0f, 1f) },
+                        onDragStart = { o ->
+                            dragging = true
+                            haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                            atEdge = false
+                            dragTo((o.x / size.width).coerceIn(0f, 1f))
+                        },
                         onDragEnd = { vm.send(Cmd.Seek((dragFraction * vm.durationMs()).toLong())); dragging = false },
                         onDragCancel = { dragging = false },
-                    ) { change, _ -> dragFraction = (change.position.x / size.width).coerceIn(0f, 1f) }
+                    ) { change, _ -> dragTo((change.position.x / size.width).coerceIn(0f, 1f)) }
                 },
             contentAlignment = Alignment.Center,
         ) {
@@ -507,13 +523,15 @@ private fun Transport(vm: AppViewModel, snap: SessionSnapshot) {
     ) {
         ModeBtn(R.drawable.ic_shuffle_line, if (snap.shuffle) "Désactiver l'aléatoire" else "Activer l'aléatoire", snap.shuffle, vm::toggleShuffle)
         IconBtn(R.drawable.ic_prev_fill, "Précédent", { vm.send(Cmd.Previous) }, size = 56.dp, iconSize = 30.dp, enabled = has)
-        Box(
-            Modifier.size(72.dp).clip(CircleShape).background(Ink.ButtonBg).pressable(enabled = has || snap.queue.isNotEmpty(), scale = 0.92f, onClick = vm::togglePlay),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (player.buffering && snap.anchor.playing) Spinner(size = 28.dp, color = Ink.ButtonText)
-            else Glyph(if (snap.anchor.playing) R.drawable.ic_pause_fill else R.drawable.ic_play_fill, tint = Ink.ButtonText, size = 32.dp)
-        }
+        PlayPauseButton(
+            playing = snap.anchor.playing,
+            buffering = player.buffering && snap.anchor.playing,
+            onClick = vm::togglePlay,
+            modifier = Modifier.size(72.dp).clip(CircleShape).background(Ink.ButtonBg),
+            iconSize = 32.dp,
+            tint = Ink.ButtonText,
+            enabled = has || snap.queue.isNotEmpty(),
+        )
         IconBtn(R.drawable.ic_next_fill, "Suivant", { vm.send(Cmd.Skip) }, size = 56.dp, iconSize = 30.dp, enabled = has)
         val icon = if (snap.repeat == RepeatMode.ONE) R.drawable.ic_repeat_one_line else R.drawable.ic_repeat_line
         ModeBtn(icon, "Répéter", snap.repeat != RepeatMode.OFF, {
@@ -705,6 +723,7 @@ private fun PlainLyrics(lyrics: Lyrics) {
 
 @Composable
 private fun QueuePage(vm: AppViewModel, snap: SessionSnapshot) {
+    val haptics = LocalHapticFeedback.current
     var local by remember(snap.queue) { mutableStateOf(snap.queue) }
     val listState = rememberLazyListState()
     val reorder = rememberReorderableLazyListState(listState) { from, to ->
@@ -743,10 +762,14 @@ private fun QueuePage(vm: AppViewModel, snap: SessionSnapshot) {
                     item, snap, dragging,
                     onPlay = { vm.send(Cmd.PlayNow(item.uid)) },
                     onRemove = { vm.send(Cmd.Remove(item.uid)) },
-                    handle = Modifier.draggableHandle(onDragStopped = {
-                        val to = local.indexOfFirst { it.uid == item.uid }
-                        if (to >= 0 && snap.queue.getOrNull(to)?.uid != item.uid) vm.send(Cmd.Move(item.uid, to))
-                    }),
+                    handle = Modifier.draggableHandle(
+                        onDragStarted = { haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate) },
+                        onDragStopped = {
+                            haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                            val to = local.indexOfFirst { it.uid == item.uid }
+                            if (to >= 0 && snap.queue.getOrNull(to)?.uid != item.uid) vm.send(Cmd.Move(item.uid, to))
+                        },
+                    ),
                 )
             }
         }

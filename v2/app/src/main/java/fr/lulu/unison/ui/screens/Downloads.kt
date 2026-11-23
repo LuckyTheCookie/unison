@@ -125,7 +125,9 @@ fun DownloadsScreen(vm: AppViewModel) {
             }
             if (pending.isNotEmpty()) {
                 item { Text("En cours", style = Type.Heading, color = Ink.Primary, modifier = Modifier.padding(start = 20.dp, top = 6.dp, bottom = 6.dp)) }
-                items(pending, key = { "p" + it.track.trackId }) { row -> PendingRow(row, status[row.track.trackId]?.progress ?: 0f, paused, vm) }
+                items(pending, key = { "p" + it.track.trackId }) { row ->
+                    Box(Modifier.animateItem()) { PendingRow(row, status[row.track.trackId]?.progress ?: 0f, paused, vm) }
+                }
             }
             if (done.isNotEmpty()) {
                 item { Text("Prêts hors ligne", style = Type.Heading, color = Ink.Primary, modifier = Modifier.padding(start = 20.dp, top = 14.dp, bottom = 6.dp)) }
@@ -138,6 +140,8 @@ fun DownloadsScreen(vm: AppViewModel) {
                         playing = snap.anchor.playing,
                         subtitle = listOfNotNull(track.artist, formatOf(row, sources), size(row.totalBytes)).joinToString(" · "),
                         onMore = { nav.trackMenu(track) },
+                        onSwipe = { vm.playNext(track) },
+                        modifier = Modifier.animateItem(),
                         trailing = { IconBtn(R.drawable.ic_close_line, "Supprimer le téléchargement", { vm.removeDownload(track.id) }, size = 40.dp, iconSize = 18.dp, tint = Ink.Tertiary) },
                     )
                 }

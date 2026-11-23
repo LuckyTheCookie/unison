@@ -48,6 +48,7 @@ import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.Load
 import fr.lulu.unison.ui.LocalBottomInset
 import fr.lulu.unison.ui.LocalNav
+import fr.lulu.unison.ui.components.SkeletonRows
 import fr.lulu.unison.ui.components.CenterBox
 import fr.lulu.unison.ui.components.Cover
 import fr.lulu.unison.ui.components.GlassButton
@@ -134,7 +135,7 @@ fun SectionBlock(section: Section, vm: AppViewModel) {
 @Composable
 fun <T> LoadBox(load: Load<T>?, onRetry: (() -> Unit)? = null, content: @Composable (T) -> Unit) {
     when (load) {
-        null, Load.Loading -> CenterBox(Modifier.fillMaxSize()) { Spinner() }
+        null, Load.Loading -> SkeletonRows(10, Modifier.fillMaxSize().statusBarsPadding().padding(top = 64.dp))
         is Load.Failed -> Notice("Impossible de charger", detail = load.message, icon = R.drawable.ic_wifi_line, action = onRetry?.let { "Réessayer" }, onAction = onRetry)
         is Load.Ready -> content(load.value)
     }
@@ -194,10 +195,11 @@ fun LazyListScope.trackPanel(
             i == tracks.lastIndex -> androidx.compose.foundation.shape.RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp)
             else -> androidx.compose.foundation.shape.RoundedCornerShape(0.dp)
         }
-        Box(Modifier.padding(horizontal = 12.dp).clip(shape).background(Ink.Fill)) {
+        Box(Modifier.animateItem().padding(horizontal = 12.dp).clip(shape).background(Ink.Fill)) {
             TrackRow(
                 track,
                 onClick = { vm.play(tracks, i) },
+                onSwipe = { vm.playNext(track) },
                 index = if (numbered) i + 1 else null,
                 showCover = !numbered,
                 current = track.id == currentId,

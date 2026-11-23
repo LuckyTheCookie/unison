@@ -44,6 +44,7 @@ import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.Load
 import fr.lulu.unison.ui.LocalBottomInset
 import fr.lulu.unison.ui.LocalNav
+import fr.lulu.unison.ui.components.SkeletonRows
 import fr.lulu.unison.ui.components.CenterBox
 import fr.lulu.unison.ui.components.Chip
 import fr.lulu.unison.ui.components.Cover
@@ -118,7 +119,7 @@ fun SearchScreen(vm: AppViewModel) {
                 }
             }
             else -> when (val r = ui.results) {
-                null, Load.Loading -> CenterBox { Spinner() }
+                null, Load.Loading -> SkeletonRows()
                 is Load.Failed -> Notice("Recherche impossible", detail = r.message, icon = R.drawable.ic_wifi_line, action = "Réessayer", onAction = { vm.submitSearch() })
                 is Load.Ready -> if (r.value.isEmpty()) Notice("Aucun résultat", detail = "Essaie avec d'autres mots.", icon = R.drawable.ic_search_line)
                 else LazyColumn(contentPadding = PaddingValues(bottom = bottom)) {
@@ -131,9 +132,10 @@ fun SearchScreen(vm: AppViewModel) {
                                 playing = snap.anchor.playing,
                                 subtitle = listOf(item.track.artist, item.track.album).filter { it.isNotBlank() }.joinToString(" • "),
                                 onMore = { nav.trackMenu(item.track) },
-                                modifier = Modifier.padding(horizontal = 4.dp),
+                                onSwipe = { vm.playNext(item.track) },
+                                modifier = Modifier.animateItem().padding(horizontal = 4.dp),
                             )
-                            else -> ResultRow(item, onClick = { nav.open(item, vm) })
+                            else -> Box(Modifier.animateItem()) { ResultRow(item, onClick = { nav.open(item, vm) }) }
                         }
                     }
                 }
