@@ -12,6 +12,9 @@ import fr.lulu.unison.youtube.Quality
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOn
 import java.util.UUID
 
 data class Profile(val deviceId: String, val name: String, val color: Int)
@@ -44,7 +47,18 @@ private val Context.store by preferencesDataStore("profile")
 
 /** Profil (nom et couleur vus par les autres) et réglages de l'app. */
 class Prefs(private val context: Context) {
+    /** Ancien emplacement de l'identifiant : effacé à la première occasion (il partait avec les sauvegardes). */
     private val kId = stringPreferencesKey("device_id")
+
+    /**
+     * Identifiant de ce téléphone dans les sessions. Gardé hors de la sauvegarde Android : deux téléphones
+     * restaurés depuis la même sauvegarde ne doivent pas se présenter sous la même identité.
+     */
+    private val deviceId: String by lazy {
+        val file = File(context.noBackupFilesDir, "device_id")
+        runCatching { file.readText().trim() }.getOrNull()?.takeIf { it.isNotEmpty() }
+            ?: UUID.randomUUID().toString().take(12).also { id -> runCatching { file.writeText(id) } }
+    }
     private val kName = stringPreferencesKey("name")
     private val kColor = intPreferencesKey("color")
     private val kQuality = stringPreferencesKey("quality")
@@ -60,8 +74,8 @@ class Prefs(private val context: Context) {
     private val kReduceMotion = booleanPreferencesKey("reduce_motion")
 
     val profile: Flow<Profile> = context.store.data.map { p ->
-        Profile(p[kId] ?: "", p[kName]?.ifBlank { null } ?: defaultName(), p[kColor] ?: AvatarColors[5])
-    }
+        Profile(deviceId, p[kName]?.ifBlank { null } ?: defaultName(), p[kColor] ?: AvatarColors[5])
+    }.flowOn(Dispatchers.IO)
 
     val settings: Flow<Settings> = context.store.data.map { p ->
         Settings(
@@ -79,18 +93,14 @@ class Prefs(private val context: Context) {
         )
     }
 
-    /** Profil avec un identifiant d'appareil, créé au premier besoin. */
+    /** Profil avec l'identifiant de ce téléphone. */
     suspend fun current(): Profile {
-        val p = profile.first()
-        if (p.deviceId.isNotEmpty()) return p
-        val id = UUID.randomUUID().toString().take(12)
-        context.store.edit { if (it[kId] == null) it[kId] = id }
+        context.store.edit { if (it.contains(kId)) it.remove(kId) }
         return profile.first()
     }
 
     suspend fun saveProfile(name: String, color: Int) {
         context.store.edit {
-            if (it[kId] == null) it[kId] = UUID.randomUUID().toString().take(12)
             it[kName] = name.trim().take(24)
             it[kColor] = color
         }

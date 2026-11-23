@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ce qui suit l'utilisateur d'un téléphone à l'autre (sauvegarde Google et transfert d'appareil) :
+  la bibliothèque (favoris, playlists, historique, albums et artistes suivis) et les réglages.
+  Tout le reste reste sur le téléphone : caches, titres téléchargés, file en cours, sources importées,
+  identifiant de l'appareil (dans no_backup).
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="database" path="library.db" />
+        <include domain="database" path="library.db-wal" />
+        <include domain="database" path="library.db-shm" />
+        <include domain="file" path="datastore/profile.preferences_pb" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="database" path="library.db" />
+        <include domain="database" path="library.db-wal" />
+        <include domain="database" path="library.db-shm" />
+        <include domain="file" path="datastore/profile.preferences_pb" />
+    </device-transfer>
+</data-extraction-rules>

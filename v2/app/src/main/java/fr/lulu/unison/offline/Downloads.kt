@@ -148,7 +148,18 @@ class Downloads(
         scope.launch(Dispatchers.IO) {
             coversDir.mkdirs()
             for (row in library.allDownloads()) {
-                if (row.state == DownloadState.DONE) completed += row.track.trackId
+                val id = row.track.trackId
+                if (row.state == DownloadState.DONE) {
+                    // Bibliothèque restaurée d'une sauvegarde, ou données effacées : la ligne dit « téléchargé »
+                    // mais le fichier n'est pas là. On l'oublie plutôt que d'échouer à la lecture.
+                    val stored = runCatching { manager.downloadIndex.getDownload(id) }.getOrNull()
+                    if (stored?.state != Download.STATE_COMPLETED) {
+                        Log.i(TAG, "téléchargement absent du cache, oublié")
+                        runCatching { library.deleteDownload(id) }
+                        continue
+                    }
+                    completed += id
+                }
                 row.loudnessDb?.let { loudness[row.track.trackId] = it }
                 val art = coverFile(row.track.trackId)
                 if (row.track.cover.isNotBlank() && art.exists()) OfflineArt.put(row.track.cover, art)

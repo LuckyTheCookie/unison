@@ -2,6 +2,7 @@ package fr.lulu.unison
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -43,6 +44,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,12 +54,15 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -65,6 +70,7 @@ import com.kyant.backdrop.drawPlainBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.vibrancy
 import fr.lulu.unison.model.JoinInfo
+import kotlinx.coroutines.flow.first
 import fr.lulu.unison.model.Track
 import fr.lulu.unison.model.TransportKind
 import fr.lulu.unison.session.Cmd
@@ -147,8 +153,6 @@ private val nearbyPermissions = arrayOf(
     Manifest.permission.BLUETOOTH_ADVERTISE,
     Manifest.permission.BLUETOOTH_CONNECT,
     Manifest.permission.NEARBY_WIFI_DEVICES,
-    Manifest.permission.ACCESS_FINE_LOCATION,
-    Manifest.permission.ACCESS_COARSE_LOCATION,
 )
 
 private enum class Tab(val route: String, val label: String, val line: Int, val fill: Int) {
@@ -177,16 +181,23 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
     val downloads = remember { DownloadStatuses() }
     LaunchedEffect(downloads) { vm.downloadStatus.collect(downloads::update) }
 
-    var playerOpen by remember { mutableStateOf(false) }
-    var playerPage by remember { mutableStateOf(PlayerPage.Art) }
-    var togetherOpen by remember { mutableStateOf(false) }
+    // Gardés à la rotation et au retour après la mort du processus : on retrouve le lecteur là où on l'a laissé.
+    var playerOpen by rememberSaveable { mutableStateOf(false) }
+    var playerPage by rememberSaveable { mutableStateOf(PlayerPage.Art) }
+    var togetherOpen by rememberSaveable { mutableStateOf(false) }
     var scanning by remember { mutableStateOf(false) }
     var menuTrack by remember { mutableStateOf<Track?>(null) }
-    var browseTarget by remember { mutableStateOf<Pair<BrowseRef, String>?>(null) }
 
-    // Autorisations : la notification de lecture au premier lancement, le réseau local au moment d'écouter ensemble.
+    // Autorisations : la notification au premier titre lancé (c'est là qu'elle sert), le réseau local au moment
+    // d'écouter ensemble.
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
-    LaunchedEffect(Unit) { notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        vm.playing.first { it }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
     var afterPermissions by remember { mutableStateOf<(() -> Unit)?>(null) }
     val transportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         afterPermissions?.invoke(); afterPermissions = null
@@ -217,7 +228,13 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
             back = { navController.popBackStack() },
             collection = { id -> navController.navigate("collection/${Uri.encode(id)}") },
             artist = { id -> navController.navigate("artist/${Uri.encode(id)}") },
-            browse = { ref, title -> browseTarget = ref to title; navController.navigate("browse") },
+            // Tout passe par la route : la page se reconstruit seule après la mort du processus.
+            browse = { ref, title ->
+                navController.navigate(
+                    "browse/${Uri.encode(ref.browseId)}?params=${Uri.encode(ref.params.orEmpty())}" +
+                        "&type=${Uri.encode(ref.pageType)}&title=${Uri.encode(title)}",
+                )
+            },
             favorites = { navController.navigate("favorites") },
             history = { navController.navigate("history") },
             playlist = { pid -> navController.navigate("playlist/$pid") },
@@ -252,7 +269,22 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
                         composable(Tab.Library.route) { LibraryScreen(vm) }
                         composable("collection/{id}") { entry -> CollectionScreen(entry.arguments?.getString("id").orEmpty(), vm) }
                         composable("artist/{id}") { entry -> ArtistScreen(entry.arguments?.getString("id").orEmpty(), vm) }
-                        composable("browse") { browseTarget?.let { (ref, title) -> BrowseScreen(ref, title, vm) } }
+                        composable(
+                            "browse/{id}?params={params}&type={type}&title={title}",
+                            arguments = listOf(
+                                navArgument("params") { defaultValue = "" },
+                                navArgument("type") { defaultValue = "" },
+                                navArgument("title") { defaultValue = "" },
+                            ),
+                        ) { entry ->
+                            val args = entry.arguments
+                            val ref = BrowseRef(
+                                browseId = args?.getString("id").orEmpty(),
+                                params = args?.getString("params")?.ifEmpty { null },
+                                pageType = args?.getString("type").orEmpty(),
+                            )
+                            BrowseScreen(ref, args?.getString("title").orEmpty(), vm)
+                        }
                         composable("favorites") { FavoritesScreen(vm) }
                         composable("history") { HistoryScreen(vm) }
                         composable("playlist/{pid}") { entry -> PlaylistScreen(entry.arguments?.getString("pid")?.toLongOrNull() ?: 0, vm) }
@@ -302,7 +334,6 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
             menuTrack?.let { TrackMenu(it, vm, onDismiss = { menuTrack = null }) }
 
             if (update.isActionable()) {
-                val context = androidx.compose.ui.platform.LocalContext.current
                 UpdateCard(
                     update,
                     onDownload = vm.updates::download,

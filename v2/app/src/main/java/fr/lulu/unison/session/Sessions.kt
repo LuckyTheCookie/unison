@@ -10,6 +10,7 @@ import fr.lulu.unison.net.Connection
 import fr.lulu.unison.net.HostTransport
 import fr.lulu.unison.net.TransportException
 import fr.lulu.unison.sync.ClockSync
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -215,7 +216,15 @@ class ClientSession private constructor(
 
     override fun hostNow() = clock.hostNow()
 
-    private suspend fun ping() = runCatching { conn.send(Msg.Ping(System.currentTimeMillis())) }
+    private suspend fun ping() {
+        try {
+            conn.send(Msg.Ping(System.currentTimeMillis()))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            // Lien en train de tomber : la boucle de réception s'occupe de la reconnexion.
+        }
+    }
 
     private fun run(c: Connection) = scope.launch {
         for (msg in c.incoming) when (msg) {
@@ -240,6 +249,8 @@ class ClientSession private constructor(
                 run(c)
                 repeat(4) { ping(); delay(150) }
                 return
+            } catch (e: CancellationException) {
+                throw e
             } catch (t: Throwable) {
                 Log.w("UnisonClient", "reconnexion $attempt", t)
             }

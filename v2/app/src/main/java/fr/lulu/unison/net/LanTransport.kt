@@ -9,20 +9,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
 import org.java_websocket.WebSocket as ServerSocketConn
+import org.java_websocket.client.WebSocketClient
+import org.java_websocket.drafts.Draft_6455
+import org.java_websocket.handshake.ServerHandshake
 import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.server.WebSocketServer
 import java.net.Inet4Address
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
+import java.net.URI
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 
 /** Connexion côté hôte (un invité). */
 private class ServerConnection(private val socket: ServerSocketConn) : Connection {
@@ -93,68 +91,58 @@ class LanHost : HostTransport {
     }
 }
 
-/** Connexion côté invité (OkHttp WebSocket). */
-private class ClientConnection : Connection, WebSocketListener() {
+/**
+ * Connexion côté invité, avec le client de Java-WebSocket (déjà utilisé pour le serveur). Une socket brute,
+ * hors de la politique réseau d'Android : l'app peut interdire le HTTP en clair partout ailleurs.
+ */
+private class ClientConnection(uri: URI) : Connection {
     override val id: String = UUID.randomUUID().toString()
     override val incoming = Channel<Msg>(Channel.UNLIMITED)
     val opened = CompletableDeferred<Unit>()
-    var socket: WebSocket? = null
 
-    override fun onOpen(webSocket: WebSocket, response: Response) {
-        opened.complete(Unit)
-    }
-
-    override fun onMessage(webSocket: WebSocket, text: String) {
-        decodeMsg(text)?.let { incoming.trySend(it) }
-    }
-
-    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-        webSocket.close(1000, null)
-        incoming.close()
-    }
-
-    override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-        incoming.close()
-    }
-
-    override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-        opened.completeExceptionally(t)
-        incoming.close()
+    val socket = object : WebSocketClient(uri, Draft_6455(), emptyMap(), CONNECT_TIMEOUT_MS) {
+        override fun onOpen(handshake: ServerHandshake) { opened.complete(Unit) }
+        override fun onMessage(message: String) { decodeMsg(message)?.let { incoming.trySend(it) } }
+        override fun onClose(code: Int, reason: String?, remote: Boolean) {
+            opened.completeExceptionally(TransportException("Connexion fermée"))
+            incoming.close()
+        }
+        override fun onError(ex: Exception) {
+            opened.completeExceptionally(ex)
+            incoming.close()
+        }
+    }.apply {
+        // Ping toutes les 10 s : un hôte parti sans prévenir est détecté.
+        connectionLostTimeout = 10
     }
 
     override suspend fun send(msg: Msg) {
-        socket?.send(msg.encode())
+        runCatching { if (socket.isOpen) socket.send(msg.encode()) }
     }
 
     override suspend fun close() {
-        socket?.close(1000, null)
+        runCatching { socket.close(1000) }
         incoming.close()
     }
 }
 
+private const val CONNECT_TIMEOUT_MS = 8_000
+
 /** Invité Wi-Fi. */
 class LanClient : ClientTransport {
-    private val http = OkHttpClient.Builder()
-        .pingInterval(10, TimeUnit.SECONDS)
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.SECONDS)
-        .build()
-
-    override suspend fun connect(info: JoinInfo, myName: String): Connection {
-        val conn = ClientConnection()
-        conn.socket = http.newWebSocket(Request.Builder().url("ws://${info.host}:${info.port}/").build(), conn)
+    override suspend fun connect(info: JoinInfo, myName: String): Connection = withContext(Dispatchers.IO) {
+        val conn = ClientConnection(URI("ws://${info.host}:${info.port}/"))
         try {
+            conn.socket.connect()
             withTimeout(10_000) { conn.opened.await() }
         } catch (t: Throwable) {
             conn.close()
             throw TransportException("Impossible de joindre ${info.hostName}. Êtes-vous sur le même Wi-Fi ?", t)
         }
-        return conn
+        conn
     }
 
-    override suspend fun shutdown() {
-        http.dispatcher.executorService.shutdown()
-    }
+    override suspend fun shutdown() = Unit
 }
 
 /**
