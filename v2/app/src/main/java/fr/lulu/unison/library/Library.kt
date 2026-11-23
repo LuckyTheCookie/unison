@@ -173,6 +173,20 @@ interface LibraryDao {
     @Insert
     suspend fun createPlaylist(row: PlaylistRow): Long
 
+    @Query("UPDATE favorite SET artist = :artist WHERE trackId = :id")
+    suspend fun setFavoriteArtist(id: String, artist: String)
+    @Query("UPDATE history SET artist = :artist WHERE trackId = :id")
+    suspend fun setHistoryArtist(id: String, artist: String)
+    @Query("UPDATE playlist_track SET artist = :artist WHERE trackId = :id")
+    suspend fun setPlaylistArtist(id: String, artist: String)
+    @Query("UPDATE download SET artist = :artist WHERE trackId = :id")
+    suspend fun setDownloadArtist(id: String, artist: String)
+
+    @Transaction
+    suspend fun setArtist(id: String, artist: String) {
+        setFavoriteArtist(id, artist); setHistoryArtist(id, artist); setPlaylistArtist(id, artist); setDownloadArtist(id, artist)
+    }
+
     @Query("UPDATE playlist SET name = :name WHERE pid = :pid")
     suspend fun renamePlaylist(pid: Long, name: String)
 
@@ -371,6 +385,23 @@ class Library(context: Context, private val now: () -> Long = System::currentTim
     suspend fun allDownloads(): List<DownloadRow> = dao.allDownloads()
 
     /** Tout ce que contient la bibliothèque, titre par titre et endroit par endroit. */
+    /**
+     * Répare les titres enregistrés avec un compteur (« 1,8 M lectures ») à la place de l'artiste, venus des pages
+     * d'album avant la correction du lecteur de pages. [lookup] donne le titre complet (ou null).
+     */
+    suspend fun repairArtists(isBroken: (String) -> Boolean, lookup: suspend (String) -> Track?): Int {
+        val broken = (dao.allFavorites().map { it.track } + dao.recentHistory(1_000).map { it.track } +
+            dao.allPlaylistTracks().map { it.track } + dao.allDownloads().map { it.track })
+            .filter { isBroken(it.artist) }.distinctBy { it.trackId }
+        var fixed = 0
+        for (cols in broken.take(60)) {
+            val artist = lookup(cols.trackId)?.artist?.takeIf { it.isNotBlank() && !isBroken(it) } ?: continue
+            dao.setArtist(cols.trackId, artist)
+            fixed++
+        }
+        return fixed
+    }
+
     suspend fun entries(): List<LibraryEntry> {
         val names = dao.allPlaylists().associate { it.pid to it.name }
         return buildList {

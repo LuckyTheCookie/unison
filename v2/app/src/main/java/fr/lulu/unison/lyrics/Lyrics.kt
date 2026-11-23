@@ -1,5 +1,6 @@
 package fr.lulu.unison.lyrics
 
+import fr.lulu.unison.model.Track
 import kotlinx.serialization.Serializable
 import java.text.Normalizer
 
@@ -327,4 +328,45 @@ object LyricFade {
         val remaining = end - positionMs
         return MAX_ALPHA * (remaining.toFloat() / fade).coerceIn(0f, 1f)
     }
+}
+
+/**
+ * Titre et artiste tels que les services de paroles les connaissent. Les titres YouTube portent souvent des
+ * ajouts (« (Official MV) », « [Lyrics] », « (Radio Edit) », « Artiste - Titre », « KATSEYE (캣츠아이) "Animal" ») qui
+ * empêchent toute correspondance. Les versions qui changent les paroles ou le minutage (remix, live) sont gardées.
+ */
+object LyricsQuery {
+    private val noise = Regex(
+        """\s*[(\[【]\s*(official|offizielles|clip|lyrics?|paroles|audio|visuali[sz]er|mv|m/v|music video|video|vid[ée]o|hd|4k|explicit|radio edit|single version|remaster(ed)?[^)\]】]*|\d{4} remaster[^)\]】]*|feat\.?[^)\]】]*|ft\.?[^)\]】]*|with [^)\]】]*)[^)\]】]*[)\]】]""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val trailing = Regex("""\s+(official\s+)?(music\s+)?(m/?v|video|audio|lyric video|visualizer)\s*$""", RegexOption.IGNORE_CASE)
+    private val quoted = Regex("""["“”«»'‘’]\s*([^"“”«»]{1,80}?)\s*["“”«»'‘’]""")
+    private val dash = Regex("""^(.+?)\s+[-–—]\s+(.+)$""")
+    /** Compteur pris pour un artiste (« 1,8 M lectures ») : sans valeur pour chercher. */
+    private val count = Regex("""^[\d.,\s\u00a0\u202f]+\p{L}{0,4}\.?[\s\u00a0\u202f]*(de[\s\u00a0\u202f]+)?(lectures?|plays?|vues?|views?|écoutes?|streams?)$""", RegexOption.IGNORE_CASE)
+
+    fun artist(track: Track): String = track.artist.takeUnless { count.matches(it.trim()) }.orEmpty()
+        .replace(Regex("""\s*\([^)]*\)"""), "")  // « KATSEYE (캣츠아이) » : le nom en double, entre parenthèses
+        .trim()
+
+    fun title(track: Track): String {
+        var t = track.title.trim()
+        val artist = normTitle(artist(track))
+        // « KATSEYE (캣츠아이) "Animal" Official MV » : le titre est entre guillemets.
+        quoted.find(t)?.let { m ->
+            val rest = t.removeRange(m.range)
+            if (artist.isNotEmpty() && normTitle(rest).contains(artist) || trailing.containsMatchIn(rest) || noise.containsMatchIn(rest)) t = m.groupValues[1]
+        }
+        // « Daft Punk - One More Time » : l'artiste en tête.
+        dash.find(t)?.let { m ->
+            if (artist.isNotEmpty() && normTitle(m.groupValues[1]).let { it.isNotEmpty() && (artist.contains(it) || it.contains(artist)) }) t = m.groupValues[2]
+        }
+        repeat(3) { t = t.replace(noise, "") }
+        t = t.replace(trailing, "").replace(Regex("""\s*[-–—]\s*$"""), "").replace(Regex("""\s{2,}"""), " ").trim()
+        return t.ifEmpty { track.title }
+    }
+
+    /** Le titre à donner aux services : même identifiant (pour le cache), titre et artiste nettoyés. */
+    fun clean(track: Track): Track = track.copy(title = title(track), artist = artist(track))
 }

@@ -268,12 +268,21 @@ object YtParser {
         return SongItem(Track(id = videoId, title = title, artist = artistOf(groups), cover = thumb, explicit = explicit(r)))
     }
 
+    /**
+     * « 1,8 M lectures », « 859 M plays », « 12 k vues » : un compteur, jamais un nom d'artiste. Les pages d'album
+     * n'ont pas de colonne artiste, seulement ce compteur, qui passait sinon pour l'artiste.
+     */
+    private val countRegex = Regex("""^[\d.,\s\u00a0\u202f]+(k|m|md|mrd|b|mio|millions?|milliards?)?\.?[\s\u00a0\u202f]*(de[\s\u00a0\u202f]+)?(lectures?|plays?|vues?|views?|écoutes?|streams?|auditeurs?|listeners?|abonnés?|subscribers?)$""", RegexOption.IGNORE_CASE)
+
+    fun isCount(text: String): Boolean = countRegex.matches(text.trim())
+
     /** Les artistes : le premier groupe (entre deux « • ») qui pointe vers une page d'artiste. */
     private fun artistOf(groups: List<List<JsonObject>>): String {
         val g = groups.firstOrNull { g -> g.any { browseRef(it["navigationEndpoint"])?.isArtist == true } }
             ?: groups.firstOrNull { g ->
                 val text = g.joinToString("") { it.string("text").orEmpty() }.trim()
-                text.isNotEmpty() && !timeRegex.matches(text) && g.none { browseRef(it["navigationEndpoint"])?.isAlbum == true }
+                text.isNotEmpty() && !timeRegex.matches(text) && !isCount(text) &&
+                    g.none { browseRef(it["navigationEndpoint"])?.isAlbum == true }
             }
             ?: return ""
         return g.joinToString("") { it.string("text").orEmpty() }.trim()

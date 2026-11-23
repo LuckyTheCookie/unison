@@ -172,11 +172,12 @@ class LyricsRepository(
         readOffline(track.id)?.let { cache[track.id] = it; return it }
         if (track.id in missing) return null
         var failed = false
+        val query = LyricsQuery.clean(track)
         val found = coroutineScope {
             val jobs = providers.map { p ->
                 async {
                     try {
-                        withTimeoutOrNull(PROVIDER_TIMEOUT_MS) { p.find(track) }
+                        withTimeoutOrNull(PROVIDER_TIMEOUT_MS) { p.find(query) }
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (t: Throwable) {

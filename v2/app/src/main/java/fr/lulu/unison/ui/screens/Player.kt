@@ -560,7 +560,7 @@ private fun LyricsPage(vm: AppViewModel) {
         LyricsUi.Idle -> Notice("Rien ne joue", icon = R.drawable.ic_lyrics_line)
         is LyricsUi.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Spinner() }
         is LyricsUi.Missing -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Notice("Pas de paroles pour ce titre", detail = "Cherchées sur LRCLIB et NetEase.", icon = R.drawable.ic_lyrics_line)
+            Notice("Pas de paroles pour ce titre", detail = "Cherchées sur Apple Music (BetterLyrics, LyricsPlus), NetEase et LRCLIB.", icon = R.drawable.ic_lyrics_line)
         }
         is LyricsUi.Ready -> if (l.lyrics.synced) SyncedLyrics(l.lyrics, vm) else PlainLyrics(l.lyrics)
     }

@@ -136,4 +136,13 @@ class YtParserTest {
         assertEquals(65_000, YtParser.parseDuration("1:05"))
         assertEquals(3_723_000, YtParser.parseDuration("1:02:03"))
     }
+
+    @Test
+    fun `page d'album sans colonne artiste, l'artiste de l'album et pas le nombre de lectures`() {
+        val page = YtParser.collection(load("album_no_artist"), "MPREb_7ltM34kr0mH")
+        org.junit.Assert.assertTrue(page.tracks.size > 5)
+        page.tracks.forEach { t ->
+            org.junit.Assert.assertEquals(t.title, "Daft Punk", t.artist)
+        }
+    }
 }

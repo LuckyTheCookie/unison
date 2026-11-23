@@ -11,6 +11,7 @@ import fr.lulu.unison.importer.ImportUi
 import fr.lulu.unison.artists.ArtistFeed
 import fr.lulu.unison.library.DownloadRow
 import fr.lulu.unison.library.ForYou
+import fr.lulu.unison.youtube.YtParser
 import fr.lulu.unison.library.LibraryEntry
 import fr.lulu.unison.library.LibraryHit
 import fr.lulu.unison.library.LibrarySource
@@ -191,7 +192,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         .transformLatest { track ->
             if (track == null) { emit(LyricsUi.Idle); return@transformLatest }
             emit(LyricsUi.Loading(track.id))
-            val found = runCatching { graph.lyrics.lyricsFor(track) }.getOrNull()
+            // Sans artiste (titre d'une page d'album enregistré avant correction) : on le redemande à YouTube Music.
+            val target = if (fr.lulu.unison.lyrics.LyricsQuery.artist(track).isNotBlank() || !online.value) track
+            else withTimeoutOrNull(5_000) { runCatching { catalog.track(track.id) }.getOrNull() }
+                ?.artist?.takeIf { it.isNotBlank() }?.let { track.copy(artist = it) } ?: track
+            val found = runCatching { graph.lyrics.lyricsFor(target) }.getOrNull()
             emit(if (found != null) LyricsUi.Ready(track.id, found) else LyricsUi.Missing(track.id))
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, LyricsUi.Idle)
@@ -630,6 +635,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     init {
         if (!BuildConfig.DEBUG) { updates.clean(); updates.check() }
         loadHome()
+        // Titres enregistrés avec « 1,8 M lectures » pour artiste : réparés une fois en ligne.
+        viewModelScope.launch {
+            online.first { it }
+            delay(3_000)
+            runCatching {
+                library.repairArtists(YtParser::isCount) { id ->
+                    withTimeoutOrNull(6_000) { runCatching { catalog.track(id) }.getOrNull() }
+                }
+            }
+        }
         // Le fil des artistes suivis se recharge quand la liste change (abonnement, import).
         viewModelScope.launch {
             subscriptions.ids.drop(1).collectLatest { delay(800); loadArtistFeed() }
