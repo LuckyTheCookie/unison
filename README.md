@@ -23,10 +23,10 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - **Swipe the artwork** to skip to the next track or go back to the previous one.
 - **Add to a playlist from the player**: a "+" button next to the heart adds the current track to a playlist (or a new one) in one tap.
 - **Smooth predictive back** for the player, the "Together" screen and navigation.
-- **Queue**: play next, add to queue, reorder, repeat, and an automatic radio that keeps the music going.
+- **Queue**: play next (or swipe a track to the right), add to queue, reorder, repeat, and an automatic radio that keeps the music going.
 - **Shuffle mode** you can switch on and off like repeat: switching it off puts the remaining tracks back in their original order. The state is shared in a session.
 - **Bass Booster** (Settings > Playback): five levels, applied on the phone with a bass shelf filter and a limiter, so it works on every device and on downloaded tracks.
-- **Library on the phone**: favourites, playlists, saved albums, followed artists and listening history.
+- **Library on the phone**: favourites, playlists, saved albums, followed artists and listening history. It follows you to a new phone through Android backup and device transfer (downloads, caches and imported sources stay on the old one).
 
 ### 🔌 Audio sources
 - YouTube Music is the default source. In Settings > Audio source you can add **another source** from the URL of its addon manifest (HTTP `/manifest.json`, `/search`, `/stream/{id}`), pick it, search directly inside it, or remove it. Unison ships **no source by default**: you are responsible for the legality of the content and for the terms of any source you add.
@@ -68,6 +68,8 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 ### 🎨 Design
 - The artwork colours the screen through an animated background, a Compose/AGSL port of [Kawarp](https://github.com/better-lyrics/kawarp).
 - Neutral glass surfaces, calm motion, Inter and Montserrat typefaces, MingCute icons. Inspired by [Liner](https://github.com/tryliner/desktop).
+- Small touches everywhere: the heart pops, play/pause morphs, the tab pill slides, the download ring turns into a check, loading shows skeletons. "Reduce animations" turns them off.
+- The animated background is drawn at a quarter of the screen size and 30 fps, and stops in battery saver.
 
 ### 🔄 Built-in updates
 - On launch, Unison looks for a new [GitHub release](../../releases) and offers to install it (SHA-256 verified).
