@@ -33,6 +33,11 @@
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- microG RE, pour savoir s'il est installé (connexion du compte YouTube). -->
+    <queries>
+        <package android:name="app.revanced.android.gms" />
+    </queries>
+
     <application
         android:name=".UnisonApp"
         android:allowBackup="true"
@@ -50,6 +55,16 @@
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
             android:value="barcode" />
+
+        <!-- Connexion au compte YouTube par microG RE (titres réservés aux adultes) : microG ne connecte à
+             YouTube que YouTube Music. Unison s'y présente donc comme lui, comme les applis patchées Morphe et
+             ReVanced. Seul microG lit ces deux lignes ; microG demande l'accord de l'utilisateur. -->
+        <meta-data
+            android:name="app.revanced.android.gms.SPOOFED_PACKAGE_NAME"
+            android:value="com.google.android.apps.youtube.music" />
+        <meta-data
+            android:name="app.revanced.android.gms.SPOOFED_PACKAGE_SIGNATURE"
+            android:value="afb0fed5eeaebdd86f56a97742f4b6b33ef59875" />
 
         <activity
             android:name=".MainActivity"

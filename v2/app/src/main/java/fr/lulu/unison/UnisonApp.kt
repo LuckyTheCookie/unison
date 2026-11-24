@@ -32,6 +32,7 @@ import fr.lulu.unison.youtube.HomeCache
 import fr.lulu.unison.youtube.TrackListCache
 import fr.lulu.unison.youtube.MusicCatalog
 import fr.lulu.unison.youtube.YouTubeCatalog
+import fr.lulu.unison.youtube.YouTubeAccountStore
 import fr.lulu.unison.youtube.YouTubeEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,12 +59,15 @@ class AppGraph(app: Application) {
         .build()
     val prefs = Prefs(app)
     val settings: StateFlow<Settings> = prefs.settings.stateIn(scope, SharingStarted.Eagerly, Settings())
+    /** Compte YouTube connecté par microG, pour les titres réservés aux adultes. Hors des sauvegardes. */
+    val youtubeAccount = YouTubeAccountStore(File(app.noBackupFilesDir, "youtube-account.json"))
     val youtube = YouTubeEngine(
         okHttp = http,
         region = Locale.getDefault().country.ifBlank { "FR" },
         language = Locale.getDefault().language.ifBlank { "fr" },
         quality = { settings.value.quality },
         cacheDir = File(app.cacheDir, "innertube"),
+        signedInCookie = { youtubeAccount.login.value?.cookie },
     )
     val catalog: MusicCatalog = YouTubeCatalog(youtube)
     val homeCache = HomeCache(File(app.cacheDir, "home.json"))

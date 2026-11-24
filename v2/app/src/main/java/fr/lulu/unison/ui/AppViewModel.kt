@@ -1,5 +1,12 @@
 package fr.lulu.unison.ui
 
+import kotlinx.coroutines.CancellationException
+import fr.lulu.unison.youtube.YouTubeLogin
+import fr.lulu.unison.youtube.MicroG
+import android.util.Log
+import android.app.Activity
+import android.accounts.OperationCanceledException
+import android.accounts.Account
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -561,6 +568,47 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveProfile(name: String, color: Int) = viewModelScope.launch { graph.prefs.saveProfile(name, color) }
     fun setQuality(q: Quality) = viewModelScope.launch { graph.prefs.setQuality(q) }
+
+    // --- Compte YouTube (par microG), pour les titres réservés aux adultes ---
+
+    val youtubeLogin: StateFlow<YouTubeLogin?> = graph.youtubeAccount.login
+
+    private val _youtubeSignIn = MutableStateFlow<YouTubeSignIn>(YouTubeSignIn.Idle)
+    val youtubeSignIn: StateFlow<YouTubeSignIn> = _youtubeSignIn.asStateFlow()
+
+    fun microGInstalled() = MicroG.installed(getApplication())
+
+    /** Compte choisi : microG donne l'adresse de connexion, que l'écran ouvre ensuite sans l'afficher. */
+    fun startYouTubeSignIn(activity: Activity, account: Account) = viewModelScope.launch {
+        _youtubeSignIn.value = YouTubeSignIn.Working
+        _youtubeSignIn.value = try {
+            YouTubeSignIn.OpenSession(account.name, MicroG.signInUrl(activity, account))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: OperationCanceledException) {
+            YouTubeSignIn.Idle
+        } catch (e: Exception) {
+            Log.w("UnisonYouTube", "connexion par microG : ${e.javaClass.simpleName}")
+            toast("Connexion impossible : ${e.message ?: "microG n'a pas répondu"}")
+            YouTubeSignIn.Idle
+        }
+    }
+
+    fun finishYouTubeSignIn(account: String, cookie: String?) = viewModelScope.launch {
+        _youtubeSignIn.value = YouTubeSignIn.Idle
+        if (!MicroG.isSignedIn(cookie)) {
+            toast("YouTube n'a pas ouvert la session, réessaie")
+            return@launch
+        }
+        graph.youtubeAccount.save(YouTubeLogin(account, cookie!!, System.currentTimeMillis()))
+        toast("Compte YouTube connecté")
+    }
+
+    fun signOutYouTube() = viewModelScope.launch {
+        graph.youtubeAccount.clear()
+        withContext(Dispatchers.Main) { runCatching { android.webkit.CookieManager.getInstance().removeAllCookies(null) } }
+        toast("Compte YouTube déconnecté")
+    }
     fun setCacheMb(mb: Int) = viewModelScope.launch { graph.prefs.setCacheMb(mb) }
     fun setNormalize(on: Boolean) = viewModelScope.launch { graph.prefs.setNormalize(on) }
     fun setAnimatedBackground(on: Boolean) = viewModelScope.launch { graph.prefs.setAnimatedBackground(on) }
@@ -656,4 +704,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         /** « Pour toi » est recalculé au plus deux fois par jour : les radios bougent peu d'une heure à l'autre. */
         const val FOR_YOU_TTL_MS = 12 * 3_600_000L
     }
+}
+
+/** Connexion du compte YouTube en cours. */
+sealed interface YouTubeSignIn {
+    data object Idle : YouTubeSignIn
+    /** microG prépare la connexion (et demande peut-être l'accord de l'utilisateur). */
+    data object Working : YouTubeSignIn
+    /** L'adresse à usage unique est prête : on l'ouvre pour récupérer la session YouTube. */
+    data class OpenSession(val account: String, val url: String) : YouTubeSignIn
 }

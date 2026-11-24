@@ -132,7 +132,14 @@ class SourceResolver(
             if (f != null) return served(ref.id, f.source, f.trackId, f.info)
             if (!s.fallbackToYouTube) throw StreamUnavailableException("Titre absent de la source choisie")
         }
-        return served(ref.id, youtube, ref.id, youtube.stream(ref.id, request) ?: throw StreamUnavailableException("Titre indisponible"))
+        val info = try {
+            youtube.stream(ref.id, request)
+        } catch (e: AgeRestrictedException) {
+            // Réservé aux adultes sur YouTube : la source choisie l'a peut-être, on la laisse répondre tout de suite.
+            val f = imp?.let { attempt(budget) { find(it.source, ref, request) } } ?: throw e
+            return served(ref.id, f.source, f.trackId, f.info)
+        }
+        return served(ref.id, youtube, ref.id, info ?: throw StreamUnavailableException("Titre indisponible"))
     }
 
     override suspend fun upgrade(ref: TrackRef, request: StreamRequest): StreamInfo? {

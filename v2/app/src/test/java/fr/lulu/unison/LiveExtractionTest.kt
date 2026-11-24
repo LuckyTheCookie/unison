@@ -46,7 +46,8 @@ class LiveExtractionTest {
             innerTube = client,
             logger = log,
         )
-        val ids = listOf("dQw4w9WgXcQ", "kJQP7kiw5Fk", "fJ9rUzIMcZQ")
+        // UNISON_IDS=id1,id2 pour essayer des titres précis.
+        val ids = System.getenv("UNISON_IDS")?.split(",")?.filter { it.isNotBlank() } ?: listOf("dQw4w9WgXcQ", "kJQP7kiw5Fk", "fJ9rUzIMcZQ")
         var direct = 0
         for (id in ids) {
             for (hints in listOf(
@@ -55,7 +56,12 @@ class LiveExtractionTest {
             )) {
                 val t0 = System.currentTimeMillis()
                 val s = runCatching { extractor.extract(id, hints.second, audioQuality = AudioQuality.HIGH) }
-                    .onFailure { println("$id [${hints.first}] ERREUR ${it::class.simpleName}: ${it.message}") }
+                    .onFailure {
+                        println("$id [${hints.first}] ERREUR ${it::class.simpleName}: ${it.message}")
+                        (it as? com.metrolist.innertubex.extraction.StreamResolveException)?.let { e ->
+                            println("    raison=${e.reason} essais=" + e.diagnostics?.attempts?.joinToString { a -> "${a.clientName}:${a.outcome}" })
+                        }
+                    }
                     .getOrNull()
                 val ms = System.currentTimeMillis() - t0
                 if (s == null) { println("$id [${hints.first}] aucun flux (${ms} ms)"); continue }

@@ -1,7 +1,15 @@
 package fr.lulu.unison.source
 
 /** Le titre n'a pas de flux lisible (ni chez la source choisie, ni sur YouTube Music). */
-class StreamUnavailableException(message: String, cause: Throwable? = null) : java.io.IOException(message, cause)
+open class StreamUnavailableException(message: String, cause: Throwable? = null) : java.io.IOException(message, cause)
+
+/**
+ * YouTube réserve ce titre aux comptes connectés dont l'âge est vérifié : aucun client anonyme ne l'obtient
+ * (ni le lecteur intégré, ni les clients TV, qui le contournaient autrefois). Le message est montré tel quel.
+ */
+class AgeRestrictedException(message: String = AGE_RESTRICTED_MESSAGE, cause: Throwable? = null) : StreamUnavailableException(message, cause)
+
+const val AGE_RESTRICTED_MESSAGE = "Réservé aux adultes sur YouTube : connecte ton compte dans les réglages"
 
 /** Manière dont le flux est servi. Seul le fichier progressif (une seule ressource HTTP) est lu pour l'instant. */
 enum class Transport { PROGRESSIVE, HLS, DASH }
