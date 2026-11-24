@@ -50,10 +50,14 @@ class LiveExtractionTest {
         val ids = System.getenv("UNISON_IDS")?.split(",")?.filter { it.isNotBlank() } ?: listOf("dQw4w9WgXcQ", "kJQP7kiw5Fk", "fJ9rUzIMcZQ")
         var direct = 0
         for (id in ids) {
+            // UNISON_CLIENTS=A,B : essaie aussi chaque client imposé, en flux direct seulement.
+            val forced = System.getenv("UNISON_CLIENTS")?.split(",")?.filter { it.isNotBlank() }.orEmpty().map { c ->
+                c to ContentHints(wantVideo = false, playbackClientOverrideId = c).withStreamCapabilities(allowHls = false, allowSabr = false)
+            }
             for (hints in listOf(
                 "défaut" to ContentHints(wantVideo = false),
                 "sans SABR/HLS" to ContentHints(wantVideo = false).withStreamCapabilities(allowHls = false, allowSabr = false),
-            )) {
+            ) + forced) {
                 val t0 = System.currentTimeMillis()
                 val s = runCatching { extractor.extract(id, hints.second, audioQuality = AudioQuality.HIGH) }
                     .onFailure {

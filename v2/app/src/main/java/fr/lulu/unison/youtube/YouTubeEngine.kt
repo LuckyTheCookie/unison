@@ -206,6 +206,11 @@ class YouTubeEngine(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
+            // Certains titres (les comptines « conçues pour les enfants », par exemple) n'ont plus de flux direct
+            // par le choix automatique d'InnerTubeX, mais un client TV en donne encore un.
+            if ((e as? StreamResolveException)?.reason != StreamResolveException.Reason.NETWORK) {
+                forcedClients(videoId)?.let { return@withContext it }
+            }
             if (isAgeGate(videoId, e)) {
                 rememberAgeGated(videoId)
                 val cookie = signedInCookie() ?: throw AgeRestrictedException(cause = e)
@@ -214,6 +219,22 @@ class YouTubeEngine(
             throw StreamUnavailableException("Titre indisponible", e)
         } ?: throw StreamUnavailableException("Titre indisponible")
         s.toResolved(videoId)
+    }
+
+    /** Dernier recours sans compte : les clients qui donnent encore un flux direct quand le choix automatique échoue. */
+    private suspend fun forcedClients(videoId: String): ResolvedStream? {
+        for (client in ANONYMOUS_FALLBACK_CLIENTS) {
+            val hints = ContentHints(wantVideo = false, playbackClientOverrideId = client)
+                .withStreamCapabilities(allowHls = false, allowSabr = false, allowBoundedRange = false)
+            try {
+                extractor.extract(videoId = videoId, hints = hints, audioQuality = audioQuality())?.let { return it.toResolved(videoId) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.d(TAG, "$client : ${(e as? StreamResolveException)?.reason}")
+            }
+        }
+        return null
     }
 
     /**
@@ -297,6 +318,8 @@ class YouTubeEngine(
         const val EXPIRY_MARGIN_MS = 10 * 60_000L
         /** Le temps de demander à YouTube la vraie raison d'un échec. */
         const val AGE_CHECK_MS = 6_000L
+        /** Sans compte, quand le choix automatique ne trouve aucun flux direct (vérifié en novembre 2026). */
+        val ANONYMOUS_FALLBACK_CLIENTS = listOf("TVHTML5_SAMSUNG")
         /** Clients qui donnent un flux direct à un compte connecté (vérifié en novembre 2026). */
         val SIGNED_IN_CLIENTS = listOf("TVHTML5_DOWNGRADED", "TVHTML5_SAMSUNG", "WEB_CREATOR")
         const val AGE_UNVERIFIED_MESSAGE = "Ton compte YouTube n'a pas confirmé que tu es majeur"
