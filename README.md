@@ -28,6 +28,8 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - **Bass Booster** (Settings > Playback): five levels, applied on the phone with a bass shelf filter and a limiter, so it works on every device and on downloaded tracks.
 - **A home made for you**: shortcut tiles (Mix, most played, favourites, downloads, playlists, albums), "Listen again", "For you" picks drawn from what you play most, your artists. Generic YouTube Music suggestions come last.
 - **Mix and library search**: one tap plays a shuffle of your favourites, playlists, saved albums and downloads; search finds any track in your library.
+- **Search inside a list**: the magnifier at the top of a playlist, album, favourites or history filters its tracks as you type; a tapped result plays the whole list from there.
+- **Multi-select**: long-press a track in a list to select several, then play them, play them next, add them to the queue, a playlist or your favourites, download them, or remove them from your playlist.
 - **Library on the phone**: favourites, playlists, saved albums, followed artists and listening history. It follows you to a new phone through Android backup and device transfer (downloads, caches and imported sources stay on the old one).
 
 ### 🔌 Audio sources
