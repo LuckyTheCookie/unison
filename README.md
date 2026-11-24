@@ -17,7 +17,7 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 ## ✨ Features
 
 ### 🎵 A full music player
-- **YouTube Music inside the app**: search tracks, albums, artists and playlists, browse the home feed and charts. No account needed.
+- **YouTube Music inside the app**: search tracks, albums, artists and playlists, browse the home feed and charts. No account needed (except, optionally, for age-restricted tracks).
 - **Its own player** (Media3 ExoPlayer): notification, lock screen, headset and Bluetooth controls, background playback, on-device audio cache.
 - **Gapless playback**: the next track is prepared while the current one plays, so changing track never cuts the sound.
 - **Swipe the artwork** to skip to the next track or go back to the previous one.
@@ -37,6 +37,7 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - Safe by design: HTTPS only, size and time limits, no private network addresses, no encrypted/DRM or adaptive (HLS/DASH) streams, header allow-list, nothing downloaded from a source is ever executed. A confirmation screen with a health check comes before any source is added.
 - Downloads remember their source and format; shared sessions work with source tracks without any protocol change.
 - A **quality label** under the track ("Sans perte", "Haute résolution", "Haute qualité", Dolby Atmos) is read from the format that is really decoded and hidden when it is standard.
+- **Age-restricted tracks** (Settings > YouTube account): YouTube only serves them to a signed-in adult account. Unison can sign in through [microG RE](https://github.com/MorpheApp/MicroG-RE) (the microG used by Morphe and ReVanced apps), so it never sees your password. The account is used for those tracks only: search, home and every other track stay anonymous, and nothing is added to your YouTube history. The session stays on the phone and is left out of backups.
 
 ### 🎤 Word-by-word lyrics
 - Word-synced lyrics from Apple Music (through [BetterLyrics](https://better-lyrics.boidu.dev) and LyricsPlus), NetEase and [LRCLIB](https://lrclib.net), all asked at once: the most precise answer wins. YouTube titles are cleaned first ("Official MV", "Radio Edit", "Artist - Title"…).
