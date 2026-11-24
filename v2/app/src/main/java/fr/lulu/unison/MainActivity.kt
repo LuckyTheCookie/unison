@@ -75,6 +75,9 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -104,6 +107,8 @@ import fr.lulu.unison.ui.LocalNav
 import fr.lulu.unison.ui.LocalReduceMotion
 import fr.lulu.unison.ui.Nav
 import fr.lulu.unison.ui.PredictiveSheet
+import fr.lulu.unison.ui.PlayerSheet
+import fr.lulu.unison.ui.rememberPlayerSheetState
 import fr.lulu.unison.ui.components.Cover
 import fr.lulu.unison.ui.components.Glyph
 import fr.lulu.unison.ui.components.IconBtn
@@ -126,6 +131,8 @@ import fr.lulu.unison.ui.screens.PlaylistScreen
 import fr.lulu.unison.ui.screens.ScannerScreen
 import fr.lulu.unison.ui.screens.SearchScreen
 import fr.lulu.unison.ui.screens.SettingsScreen
+import fr.lulu.unison.ui.screens.SettingsPage
+import fr.lulu.unison.ui.screens.SettingsPageScreen
 import fr.lulu.unison.ui.screens.TogetherScreen
 import fr.lulu.unison.ui.screens.TrackMenu
 import fr.lulu.unison.ui.screens.UpdateCard
@@ -207,6 +214,9 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
     // Gardés à la rotation et au retour après la mort du processus : on retrouve le lecteur là où on l'a laissé.
     var playerOpen by rememberSaveable { mutableStateOf(false) }
     var playerPage by rememberSaveable { mutableStateOf(PlayerPage.Art) }
+    val sheet = rememberPlayerSheetState(playerOpen)
+    // Le fond de l'app ne bouge plus quand le lecteur le couvre entièrement.
+    val playerCovers by remember { derivedStateOf { sheet.progress >= 1f } }
     var togetherOpen by rememberSaveable { mutableStateOf(false) }
     var scanning by remember { mutableStateOf(false) }
     var menuTrack by remember { mutableStateOf<Track?>(null) }
@@ -262,6 +272,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
             history = { navController.navigate("history") },
             playlist = { pid -> navController.navigate("playlist/$pid") },
             settings = { navController.navigate("settings") },
+            settingsPage = { page -> navController.navigate("settings/$page") },
             downloads = { navController.navigate("downloads") },
             import = { navController.navigate("import") },
             librarySearch = { navController.navigate("library-search") },
@@ -277,7 +288,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
     CompositionLocalProvider(LocalDownloads provides downloads, LocalReduceMotion provides settings.reduceMotion) {
         Box(Modifier.fillMaxSize().background(Ink.Canvas)) {
             Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-                KawarpBackground(current?.track?.cover, Modifier.fillMaxSize(), dim = 0.6f, animated = settings.animatedBackground && !playerOpen)
+                KawarpBackground(current?.track?.cover, Modifier.fillMaxSize(), dim = 0.6f, animated = settings.animatedBackground && !playerCovers)
                 CompositionLocalProvider(LocalNav provides nav, LocalBottomInset provides bottomInset) {
                     NavHost(
                         navController, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize(),
@@ -313,6 +324,9 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
                         composable("history") { HistoryScreen(vm) }
                         composable("playlist/{pid}") { entry -> PlaylistScreen(entry.arguments?.getString("pid")?.toLongOrNull() ?: 0, vm) }
                         composable("settings") { SettingsScreen(vm) }
+                        composable("settings/{page}") { entry ->
+                            SettingsPage.of(entry.arguments?.getString("page"))?.let { SettingsPageScreen(it, vm) }
+                        }
                         composable("downloads") { DownloadsScreen(vm) }
                         composable("import") { ImportScreen(vm) }
                         composable("library-search") { LibrarySearchScreen(vm) }
@@ -322,8 +336,9 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
 
             Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp).padding(bottom = 8.dp)) {
                 Toast(message, settings.reduceMotion, onDismiss = vm::dismissMessage)
-                current?.let { item ->
-                    MiniPlayer(vm, item.track, backdrop, onOpen = { playerPage = PlayerPage.Art; playerOpen = true })
+                if (current != null) {
+                    // Place du mini-lecteur : c'est le lecteur lui-même, réduit, qui s'y dessine (plus bas).
+                    Spacer(Modifier.fillMaxWidth().height(64.dp).onGloballyPositioned { sheet.collapsed = it.boundsInRoot() })
                     Spacer(Modifier.height(8.dp))
                 }
                 BottomBar(navController, backdrop)
@@ -331,12 +346,17 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
 
             CompositionLocalProvider(LocalNav provides nav) {
                 // Le geste de retour ferme le lecteur depuis la pochette ; depuis les paroles ou la file, il y ramène.
-                PredictiveSheet(
-                    playerOpen && current != null,
-                    backEnabled = playerPage == PlayerPage.Art && !togetherOpen && !scanning,
-                    onBack = { playerOpen = false },
-                ) { gesturing ->
-                    PlayerScreen(vm, playerPage, onPage = { playerPage = it }, onClose = { playerOpen = false }, gesturing = gesturing)
+                current?.let { item ->
+                    PlayerSheet(
+                        sheet,
+                        open = playerOpen,
+                        onOpenChange = { open -> if (open && !playerOpen) playerPage = PlayerPage.Art; playerOpen = open },
+                        backEnabled = playerPage == PlayerPage.Art && !togetherOpen && !scanning,
+                        glass = Modifier.clip(Radius.Art).glassBar(backdrop, Radius.Art),
+                        mini = { MiniPlayer(vm, item.track, onOpen = { playerPage = PlayerPage.Art; playerOpen = true }) },
+                    ) { moving ->
+                        PlayerScreen(vm, playerPage, onPage = { playerPage = it }, onClose = { playerOpen = false }, gesturing = moving)
+                    }
                 }
                 BackHandler(playerOpen && playerPage != PlayerPage.Art && !togetherOpen && !scanning) { playerPage = PlayerPage.Art }
                 PredictiveSheet(togetherOpen, backEnabled = !scanning, onBack = { togetherOpen = false }) {
@@ -364,23 +384,17 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
     }
 
     BackHandler(scanning) { scanning = false }
-    LaunchedEffect(current == null) { if (current == null) playerOpen = false }
+    LaunchedEffect(current == null) { if (current == null) { playerOpen = false; sheet.jumpTo(false) } }
 }
 
 @Composable
-private fun MiniPlayer(vm: AppViewModel, track: Track, backdrop: Backdrop, onOpen: () -> Unit) {
+private fun MiniPlayer(vm: AppViewModel, track: Track, onOpen: () -> Unit) {
     val player by vm.player.collectAsStateWithLifecycle()
     val playing by vm.playing.collectAsStateWithLifecycle()
     val position = rememberPositionState(vm, 250)
     val duration = rememberDuration(vm)
-    Box(
-        Modifier.fillMaxWidth().height(64.dp).clip(Radius.Art).glassBar(backdrop, Radius.Art)
-            .pointerInput(Unit) {
-                var total = 0f
-                detectVerticalDragGestures(onDragStart = { total = 0f }, onDragEnd = { if (total < -60f) onOpen() }) { _, dy -> total += dy }
-            }
-            .pressable(scale = 0.985f, onClick = onOpen),
-    ) {
+    // Le verre et le glisser vers le haut sont ceux du lecteur réduit (PlayerSheet).
+    Box(Modifier.fillMaxSize().clip(Radius.Art).pressable(scale = 0.985f, onClick = onOpen)) {
         val reduce = LocalReduceMotion.current
         Row(Modifier.fillMaxSize().padding(start = 9.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             // Au changement de titre, pochette et texte glissent : on voit que la musique a changé.

@@ -21,6 +21,8 @@ class Nav(
     val history: () -> Unit,
     val playlist: (pid: Long) -> Unit,
     val settings: () -> Unit,
+    /** Une page des réglages (voir SettingsPage.route). */
+    val settingsPage: (route: String) -> Unit,
     val downloads: () -> Unit,
     val import: () -> Unit,
     /** Recherche dans la bibliothèque (favoris, playlists, téléchargements, historique). */

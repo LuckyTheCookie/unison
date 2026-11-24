@@ -1,5 +1,9 @@
 package fr.lulu.unison.ui.screens
 
+import androidx.annotation.DrawableRes
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import fr.lulu.unison.ui.components.Glyph
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -59,144 +63,280 @@ import fr.lulu.unison.youtube.Quality
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+/** Pages des réglages : l'accueil les range par thème, chacune s'ouvre à part. */
+enum class SettingsPage(val route: String, val title: String) {
+    Profile("profil", "Profil"),
+    Playback("lecture", "Lecture"),
+    Sources("sources", "Sources audio"),
+    Account("compte", "Compte YouTube"),
+    Storage("stockage", "Téléchargements et stockage"),
+    Appearance("apparence", "Apparence"),
+    About("a-propos", "À propos"),
+    ;
+
+    companion object {
+        fun of(route: String?) = entries.firstOrNull { it.route == route }
+    }
+}
+
+/** Accueil des réglages : le profil, puis les thèmes, chacun avec un résumé de ce qui est choisi. */
 @Composable
 fun SettingsScreen(vm: AppViewModel) {
     val nav = LocalNav.current
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val profile by vm.profile.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val sources by vm.sources.collectAsStateWithLifecycle()
+    val login by vm.youtubeLogin.collectAsStateWithLifecycle()
     val update by vm.updateState.collectAsStateWithLifecycle()
-    var renaming by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         TopBar("Réglages", onBack = nav.back)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = LocalBottomInset.current + 24.dp)) {
-            Label("Profil")
-            GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
-                val p = profile
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(p?.name.orEmpty(), p?.color ?: AvatarColors[5], size = 48.dp)
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(p?.name.orEmpty(), style = Type.Title, color = Ink.Primary)
-                        Text("C'est le nom que voient les autres quand vous écoutez ensemble", style = Type.Caption, color = Ink.Tertiary)
-                    }
-                    GlassButton("Modifier", { renaming = true })
+            val p = profile
+            Row(
+                Modifier.fillMaxWidth().clip(Radius.Panel).background(Ink.Fill).border(0.5.dp, Ink.Hairline, Radius.Panel)
+                    .pressable(scale = 0.985f) { nav.settingsPage(SettingsPage.Profile.route) }.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Avatar(p?.name.orEmpty(), p?.color ?: AvatarColors[5], size = 52.dp)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(p?.name.orEmpty(), style = Type.Title, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Ton nom et ta couleur en écoute partagée", style = Type.Caption, color = Ink.Tertiary)
                 }
-                Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    AvatarColors.forEach { c ->
-                        val selected = p?.color == c
-                        Box(
-                            Modifier.size(30.dp).clip(CircleShape).background(Color(c))
-                                .then(if (selected) Modifier.border(2.5.dp, Color.White, CircleShape) else Modifier)
-                                .pressable { p?.let { vm.saveProfile(it.name, c) } },
-                        )
-                    }
-                }
+                Glyph(R.drawable.ic_right_line, tint = Ink.Tertiary, size = 18.dp)
             }
 
-            Label("Source audio")
-            SourcesPanel(vm)
-
-            Label("Compte YouTube")
-            YouTubeAccountPanel(vm)
-
-            Label("Lecture")
-            GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
-                Text("Qualité audio", style = Type.Row, color = Ink.Primary)
-                Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Quality.entries.forEach { q -> Chip(q.label, settings.quality == q, onClick = { vm.setQuality(q) }) }
-                }
-                Divider()
-                SwitchRow("Égaliser le volume", "Ramène les titres trop forts au même niveau que les autres", settings.normalizeVolume) { vm.setNormalize(!settings.normalizeVolume) }
-                Divider()
-                SwitchRow("Bass Booster", "Renforce les graves sur ce téléphone, sans saturer. S'applique tout de suite.", settings.bassBoostOn) {
-                    vm.setBassBoost(!settings.bassBoostOn)
-                }
-                if (settings.bassBoostOn) {
-                    Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        (1..5).forEach { level -> Chip("$level", settings.bassLevel == level, onClick = { vm.setBassLevel(level) }) }
-                    }
-                }
-                Divider()
-                SwitchRow("Privilégier mes artistes", "La radio automatique glisse environ un titre sur quatre de tes artistes suivis", settings.preferMyArtists) { vm.setPreferMyArtists(!settings.preferMyArtists) }
-                Divider()
-                Text("Titres gardés sur le téléphone", style = Type.Row, color = Ink.Primary)
-                Text("Un titre déjà écouté se relance sans le retélécharger. Pris en compte au prochain lancement.", style = Type.Caption, color = Ink.Tertiary)
-                Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(256 to "256 Mo", 512 to "512 Mo", 1024 to "1 Go", 2048 to "2 Go").forEach { (mb, label) ->
-                        Chip(label, settings.cacheMb == mb, onClick = { vm.setCacheMb(mb) })
-                    }
-                }
-            }
-
-            Label("Hors ligne")
-            GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
-                SwitchRow("Télécharger en Wi-Fi uniquement", "Les téléchargements attendent un réseau Wi-Fi au lieu d'utiliser les données mobiles", settings.downloadWifiOnly) {
-                    vm.setDownloadWifiOnly(!settings.downloadWifiOnly)
-                }
-                Divider()
-                GlassButton("Gérer les téléchargements", nav.downloads, Modifier.fillMaxWidth(), icon = R.drawable.ic_download_line)
+            Label("Écoute")
+            GlassPanel(Modifier.fillMaxWidth()) {
+                val activeName = sources.firstOrNull { it.id == settings.activeSource }?.name ?: "YouTube Music"
+                PageRow(SettingsPage.Playback, R.drawable.ic_headphone_line, listOfNotNull(
+                    "Qualité ${settings.quality.label.lowercase()}",
+                    "volume égalisé".takeIf { settings.normalizeVolume },
+                    "graves renforcés".takeIf { settings.bassBoostOn },
+                ).joinToString(" · "))
+                RowDivider()
+                PageRow(SettingsPage.Sources, R.drawable.ic_music_line,
+                    if (sources.isEmpty()) "YouTube Music" else "$activeName · ${sources.size + 1} sources")
+                RowDivider()
+                PageRow(SettingsPage.Account, R.drawable.ic_user_line, login?.account ?: "Non connecté · titres réservés aux adultes")
             }
 
             Label("Bibliothèque")
-            GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
-                Text("Importer depuis un autre service", style = Type.Row, color = Ink.Primary)
-                Text("Favoris, playlists et artistes d'un export CSV (Deezer, Spotify…)", style = Type.Caption, color = Ink.Tertiary)
-                Spacer(Modifier.height(12.dp))
-                GlassButton("Importer un fichier CSV", nav.import, Modifier.fillMaxWidth(), icon = R.drawable.ic_import_line)
-            }
-
-            Label("Apparence")
-            GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
-                SwitchRow("Fond animé", "Le fond tiré de la pochette ondule doucement. Le couper économise un peu de batterie.", settings.animatedBackground) {
-                    vm.setAnimatedBackground(!settings.animatedBackground)
-                }
-                Divider()
-                SwitchRow("Réduire les animations", "La pochette, la barre de lecture, les paroles et le libellé de qualité changent sans transition.", settings.reduceMotion) {
-                    vm.setReduceMotion(!settings.reduceMotion)
-                }
+            GlassPanel(Modifier.fillMaxWidth()) {
+                PageRow(SettingsPage.Storage, R.drawable.ic_download_line, listOf(
+                    if (settings.downloadWifiOnly) "Wi-Fi uniquement" else "Wi-Fi et données mobiles",
+                    "cache de ${cacheLabel(settings.cacheMb)}",
+                ).joinToString(" · "))
+                RowDivider()
+                LinkRow(R.drawable.ic_import_line, "Importer", "Favoris et playlists d'un export CSV (Deezer, Spotify…)", nav.import)
             }
 
             Label("Application")
-            GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Unison ${BuildConfig.VERSION_NAME}", style = Type.Row, color = Ink.Primary)
-                        Text(
-                            when (update) {
-                                UpdateState.Checking -> "Recherche d'une mise à jour…"
-                                UpdateState.UpToDate -> "Tu as la dernière version"
-                                is UpdateState.Available -> "Une nouvelle version est disponible"
-                                else -> "Mises à jour depuis GitHub"
-                            },
-                            style = Type.Caption, color = Ink.Tertiary,
-                        )
-                    }
-                    GlassButton("Vérifier", { vm.updates.check(manual = true) }, enabled = update !is UpdateState.Checking)
-                }
-                Divider()
-                GlassButton("Envoyer Unison à un ami", { scope.launch { ApkSharer.share(context) } }, Modifier.fillMaxWidth(), icon = R.drawable.ic_share_line)
+            GlassPanel(Modifier.fillMaxWidth()) {
+                PageRow(SettingsPage.Appearance, R.drawable.ic_sparkles_line, listOf(
+                    if (settings.animatedBackground) "Fond animé" else "Fond fixe",
+                    if (settings.reduceMotion) "animations réduites" else "animations complètes",
+                ).joinToString(" · "))
+                RowDivider()
+                PageRow(SettingsPage.About, R.drawable.ic_info_line, "Version ${BuildConfig.VERSION_NAME}" +
+                    if (update is UpdateState.Available) " · mise à jour disponible" else "")
             }
 
             Text(
-                "Unison n'est affilié ni à YouTube ni à Google. Fond animé : Kawarp, de Better Lyrics. Icônes : Mingcute.",
+                "Unison n'est affilié ni à YouTube ni à Google.",
                 style = Type.Caption, color = Ink.Tertiary, textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 22.dp),
             )
         }
     }
-    if (renaming) TextPrompt("Ton nom", "Nom affiché", initial = profile?.name.orEmpty(), confirm = "Enregistrer", onDismiss = { renaming = false }) { name ->
-        renaming = false
-        vm.saveProfile(name.take(24), profile?.color ?: AvatarColors[5])
+}
+
+/** Une page des réglages, ouverte depuis l'accueil des réglages. */
+@Composable
+fun SettingsPageScreen(page: SettingsPage, vm: AppViewModel) {
+    val nav = LocalNav.current
+    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        TopBar(page.title, onBack = nav.back)
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(top = 8.dp, bottom = LocalBottomInset.current + 24.dp)) {
+            when (page) {
+                SettingsPage.Profile -> ProfilePage(vm)
+                SettingsPage.Playback -> PlaybackPage(vm)
+                SettingsPage.Sources -> SourcesPanel(vm)
+                SettingsPage.Account -> YouTubeAccountPanel(vm)
+                SettingsPage.Storage -> StoragePage(vm)
+                SettingsPage.Appearance -> AppearancePage(vm)
+                SettingsPage.About -> AboutPage(vm)
+            }
+        }
     }
 }
 
 @Composable
-private fun Label(text: String) =
-    Text(text, style = Type.Heading, color = Ink.Primary, modifier = Modifier.padding(start = 8.dp, top = 22.dp, bottom = 10.dp))
+private fun ProfilePage(vm: AppViewModel) {
+    val profile by vm.profile.collectAsStateWithLifecycle()
+    var renaming by remember { mutableStateOf(false) }
+    val p = profile
+    GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Avatar(p?.name.orEmpty(), p?.color ?: AvatarColors[5], size = 56.dp)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(p?.name.orEmpty(), style = Type.Title, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("C'est le nom que voient les autres quand vous écoutez ensemble", style = Type.Caption, color = Ink.Tertiary)
+            }
+            GlassButton("Modifier", { renaming = true })
+        }
+    }
+    Label("Couleur")
+    GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            AvatarColors.forEach { c ->
+                val selected = p?.color == c
+                Box(
+                    Modifier.size(34.dp).clip(CircleShape).background(Color(c))
+                        .then(if (selected) Modifier.border(2.5.dp, Color.White, CircleShape) else Modifier)
+                        .pressable { p?.let { vm.saveProfile(it.name, c) } },
+                )
+            }
+        }
+    }
+    if (renaming) TextPrompt("Ton nom", "Nom affiché", initial = p?.name.orEmpty(), confirm = "Enregistrer", onDismiss = { renaming = false }) { name ->
+        renaming = false
+        vm.saveProfile(name.take(24), p?.color ?: AvatarColors[5])
+    }
+}
+
+@Composable
+private fun PlaybackPage(vm: AppViewModel) {
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    Label("Son", top = 4.dp)
+    GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
+        Text("Qualité audio", style = Type.Row, color = Ink.Primary)
+        Text("« Économie de données » consomme environ trois fois moins en données mobiles", style = Type.Caption, color = Ink.Tertiary)
+        Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Quality.entries.forEach { q -> Chip(q.label, settings.quality == q, onClick = { vm.setQuality(q) }) }
+        }
+        Divider()
+        SwitchRow("Égaliser le volume", "Ramène les titres trop forts au même niveau que les autres", settings.normalizeVolume) { vm.setNormalize(!settings.normalizeVolume) }
+        Divider()
+        SwitchRow("Bass Booster", "Renforce les graves sur ce téléphone, sans saturer. S'applique tout de suite.", settings.bassBoostOn) {
+            vm.setBassBoost(!settings.bassBoostOn)
+        }
+        if (settings.bassBoostOn) {
+            Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                (1..5).forEach { level -> Chip("$level", settings.bassLevel == level, onClick = { vm.setBassLevel(level) }) }
+            }
+        }
+    }
+    Label("Radio")
+    GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
+        SwitchRow("Privilégier mes artistes", "La radio automatique glisse environ un titre sur quatre de tes artistes suivis", settings.preferMyArtists) { vm.setPreferMyArtists(!settings.preferMyArtists) }
+    }
+}
+
+@Composable
+private fun StoragePage(vm: AppViewModel) {
+    val nav = LocalNav.current
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    Label("Téléchargements", top = 4.dp)
+    GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
+        SwitchRow("Wi-Fi uniquement", "Les téléchargements attendent un réseau Wi-Fi au lieu d'utiliser les données mobiles", settings.downloadWifiOnly) {
+            vm.setDownloadWifiOnly(!settings.downloadWifiOnly)
+        }
+        Divider()
+        GlassButton("Gérer les téléchargements", nav.downloads, Modifier.fillMaxWidth(), icon = R.drawable.ic_download_line)
+    }
+    Label("Cache d'écoute")
+    GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
+        Text("Titres gardés sur le téléphone", style = Type.Row, color = Ink.Primary)
+        Text("Un titre déjà écouté se relance sans le retélécharger. Pris en compte au prochain lancement.", style = Type.Caption, color = Ink.Tertiary)
+        Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(256, 512, 1024, 2048).forEach { mb -> Chip(cacheLabel(mb), settings.cacheMb == mb, onClick = { vm.setCacheMb(mb) }) }
+        }
+    }
+}
+
+@Composable
+private fun AppearancePage(vm: AppViewModel) {
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
+        SwitchRow("Fond animé", "Le fond tiré de la pochette ondule doucement. Le couper économise un peu de batterie.", settings.animatedBackground) {
+            vm.setAnimatedBackground(!settings.animatedBackground)
+        }
+        Divider()
+        SwitchRow("Réduire les animations", "La pochette, le lecteur, la barre de lecture, les paroles et le libellé de qualité changent sans transition.", settings.reduceMotion) {
+            vm.setReduceMotion(!settings.reduceMotion)
+        }
+    }
+}
+
+@Composable
+private fun AboutPage(vm: AppViewModel) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val update by vm.updateState.collectAsStateWithLifecycle()
+    GlassPanel(Modifier.fillMaxWidth(), padding = PaddingValues(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Unison ${BuildConfig.VERSION_NAME}", style = Type.Row, color = Ink.Primary)
+                Text(
+                    when (update) {
+                        UpdateState.Checking -> "Recherche d'une mise à jour…"
+                        UpdateState.UpToDate -> "Tu as la dernière version"
+                        is UpdateState.Available -> "Une nouvelle version est disponible"
+                        else -> "Mises à jour depuis GitHub"
+                    },
+                    style = Type.Caption, color = Ink.Tertiary,
+                )
+            }
+            GlassButton("Vérifier", { vm.updates.check(manual = true) }, enabled = update !is UpdateState.Checking)
+        }
+        Divider()
+        GlassButton("Envoyer Unison à un ami", { scope.launch { ApkSharer.share(context) } }, Modifier.fillMaxWidth(), icon = R.drawable.ic_share_line)
+    }
+    Text(
+        "Unison n'est affilié ni à YouTube ni à Google. Fond animé : Kawarp, de Better Lyrics. Icônes : Mingcute.",
+        style = Type.Caption, color = Ink.Tertiary, textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 22.dp),
+    )
+}
+
+private fun cacheLabel(mb: Int) = if (mb >= 1024) "${mb / 1024} Go" else "$mb Mo"
+
+/** Ligne de l'accueil des réglages : icône, titre, résumé de ce qui est choisi, chevron. */
+@Composable
+private fun PageRow(page: SettingsPage, @DrawableRes icon: Int, summary: String) {
+    val nav = LocalNav.current
+    LinkRow(icon, page.title, summary) { nav.settingsPage(page.route) }
+}
+
+@Composable
+private fun LinkRow(@DrawableRes icon: Int, title: String, summary: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().pressable(scale = 0.985f, onClick = onClick).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(38.dp).clip(Radius.Control).background(Ink.FillStrong), contentAlignment = Alignment.Center) {
+            Glyph(icon, tint = Ink.Primary, size = 20.dp)
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = Type.Row, color = Ink.Primary, maxLines = 1)
+            Text(summary, style = Type.Caption, color = Ink.Tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.width(8.dp))
+        Glyph(R.drawable.ic_right_line, tint = Ink.Tertiary, size = 18.dp)
+    }
+}
+
+/** Séparation entre deux lignes, alignée sur le texte (après l'icône). */
+@Composable
+private fun RowDivider() = Box(Modifier.padding(start = 66.dp).fillMaxWidth().height(0.5.dp).background(Ink.Hairline))
+
+@Composable
+private fun Label(text: String, top: Dp = 22.dp) =
+    Text(text, style = Type.Heading, color = Ink.Primary, modifier = Modifier.padding(start = 8.dp, top = top, bottom = 10.dp))
 
 @Composable
 private fun Divider() = Box(Modifier.padding(vertical = 14.dp).fillMaxWidth().height(0.5.dp).background(Ink.Hairline))

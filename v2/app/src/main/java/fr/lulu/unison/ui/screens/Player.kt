@@ -13,7 +13,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -163,13 +162,9 @@ fun PlayerScreen(vm: AppViewModel, page: PlayerPage, onPage: (PlayerPage) -> Uni
     val item = snap.anchor.item
     val track = item?.track
 
-    Box(
-        Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) {
-            var total = 0f
-            detectVerticalDragGestures(onDragStart = { total = 0f }, onDragEnd = { if (total > 140f) onClose() }) { _, dy -> total += dy }
-        },
-    ) {
-        // Pendant un geste de retour, le fond se fige : chaque image du geste reste fluide.
+    // Le glisser vers le bas (qui abaisse le lecteur en suivant le doigt) est géré par PlayerSheet.
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        // Tant que le lecteur bouge (glisser, retour), le fond se fige : chaque image du geste reste fluide.
         KawarpBackground(track?.cover, Modifier.fillMaxSize(), dim = if (page == PlayerPage.Art) 0.22f else 0.42f, animated = settings.animatedBackground && !gesturing)
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
