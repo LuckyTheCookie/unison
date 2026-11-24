@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.IntOffset
 import fr.lulu.unison.ui.components.PlayPauseButton
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Easing
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -201,6 +202,9 @@ private fun Modifier.glassBar(backdrop: Backdrop, shape: Shape): Modifier = this
     )
     .border(0.5.dp, Ink.Hairline, shape)
 
+/** Ne bouge pas pendant la première moitié de la transition, puis avance d'un trait. */
+private val LateEasing = Easing { f -> ((f - 0.45f) / 0.55f).coerceIn(0f, 1f) }
+
 @Composable
 private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit) {
     val navController = rememberNavController()
@@ -294,10 +298,17 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
                         navController, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize(),
                         enterTransition = { fadeIn(tween(Motion.Page, easing = Motion.Ease)) + slideInVertically(tween(Motion.Page, easing = Motion.Ease)) { 24 } },
                         exitTransition = { fadeOut(tween(Motion.Fast)) },
-                        // Retour (y compris prédictif, que le geste fait avancer) : la page quitte en rétrécissant,
-                        // celle d'en dessous revient en grandissant légèrement.
-                        popEnterTransition = { fadeIn(tween(Motion.Page, easing = Motion.Ease)) + scaleIn(tween(Motion.Page, easing = Motion.Ease), initialScale = 0.96f) },
-                        popExitTransition = { fadeOut(tween(Motion.Page)) + scaleOut(tween(Motion.Page), targetScale = 0.9f) },
+                        // Retour, y compris prédictif (le geste fait avancer la transition), comme le lecteur : la page
+                        // rétrécit dès le début du geste en restant nette, et celle d'en dessous n'apparaît qu'une fois
+                        // le retour lancé. Les pages n'ont pas de fond : deux pages à demi visibles se mélangeraient.
+                        popEnterTransition = {
+                            fadeIn(tween(Motion.Slow, easing = LateEasing)) +
+                                scaleIn(tween(Motion.Slow, easing = Motion.Ease), initialScale = 0.94f)
+                        },
+                        popExitTransition = {
+                            scaleOut(tween(Motion.Slow, easing = Motion.Ease), targetScale = 0.86f) +
+                                fadeOut(tween(Motion.Slow, easing = LateEasing))
+                        },
                     ) {
                         composable(Tab.Home.route) { HomeScreen(vm) }
                         composable(Tab.Search.route) { SearchScreen(vm) }
