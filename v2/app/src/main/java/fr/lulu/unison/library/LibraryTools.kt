@@ -79,6 +79,20 @@ object LibrarySearch {
             .map { it.first }
     }
 
+    /**
+     * Recherche dans une seule liste (playlist, album, favoris) : les positions des titres dont le titre,
+     * l'artiste ou l'album contient chaque mot de [query], dans l'ordre de la liste. Requête vide : tout.
+     */
+    fun within(query: String, tracks: List<Track>): List<Int> {
+        val words = normalize(query).split(' ').filter { it.isNotBlank() }
+        if (words.isEmpty()) return tracks.indices.toList()
+        return tracks.indices.filter { i ->
+            val t = tracks[i]
+            val haystack = normalize(t.title) + ' ' + normalize(t.artist) + ' ' + normalize(t.album)
+            words.all { it in haystack }
+        }
+    }
+
     /** Regroupe les apparitions d'un même titre. */
     fun group(entries: List<LibraryEntry>): List<LibraryHit> =
         entries.groupBy { it.track.id }.map { (_, list) -> LibraryHit(list.first().track, list.map { it.source }) }

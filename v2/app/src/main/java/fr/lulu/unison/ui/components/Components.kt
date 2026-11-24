@@ -1,5 +1,7 @@
 package fr.lulu.unison.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.AnimatedVisibility
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
@@ -205,11 +207,16 @@ fun TrackRow(
     onMore: (() -> Unit)? = null,
     onSwipe: (() -> Unit)? = null,
     trailing: @Composable (RowScope.() -> Unit)? = null,
+    /** Appui long ; par défaut, le menu du titre. */
+    onLongClick: (() -> Unit)? = onMore,
+    /** Mode sélection : null hors sélection, sinon la case de ce titre (cochée ou non). */
+    selected: Boolean? = null,
 ) {
     val offset = remember { Animatable(0f) }
     val threshold = with(LocalDensity.current) { SWIPE_THRESHOLD.toPx() }
     Box(modifier.fillMaxWidth().height(64.dp)) {
-        if (onSwipe != null) {
+        if (selected == true) Box(Modifier.matchParentSize().background(Ink.Accent.copy(alpha = 0.14f)))
+        if (onSwipe != null && selected == null) {
             Box(
                 Modifier.matchParentSize().padding(start = 24.dp).graphicsLayer {
                     val p = (offset.value / threshold).coerceIn(0f, 1f)
@@ -222,10 +229,16 @@ fun TrackRow(
         }
         Row(
             Modifier.fillMaxSize()
-                .then(if (onSwipe != null) Modifier.swipeToAct(offset, threshold, "Lire ensuite", onSwipe) else Modifier)
-                .pressable(scale = 0.985f, onLongClick = onMore, onClick = onClick).padding(horizontal = 12.dp),
+                .then(if (onSwipe != null && selected == null) Modifier.swipeToAct(offset, threshold, "Lire ensuite", onSwipe) else Modifier)
+                .pressable(scale = 0.985f, onLongClick = onLongClick, onClick = onClick).padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            AnimatedVisibility(selected != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SelectionCheck(selected == true)
+                    Spacer(Modifier.width(12.dp))
+                }
+            }
             if (index != null) {
                 Box(Modifier.width(34.dp), contentAlignment = Alignment.Center) {
                     if (current) PlayingBars(playing) else Text("$index", style = Type.Label, color = Ink.Tertiary)
@@ -253,8 +266,22 @@ fun TrackRow(
             if (trailing != null) trailing()
             else {
                 if (track.durationMs > 0) Text(formatTime(track.durationMs), style = Type.Time, color = Ink.Tertiary, modifier = Modifier.padding(start = 10.dp))
-                if (onMore != null) IconBtn(R.drawable.ic_more_line, "Plus d'options", onMore, size = 40.dp, iconSize = 20.dp, tint = Ink.Secondary)
+                if (onMore != null && selected == null) IconBtn(R.drawable.ic_more_line, "Plus d'options", onMore, size = 40.dp, iconSize = 20.dp, tint = Ink.Secondary)
             }
+        }
+    }
+}
+
+/** Case ronde du mode sélection : se remplit en ressort quand on la coche. */
+@Composable
+fun SelectionCheck(checked: Boolean, modifier: Modifier = Modifier) {
+    val fill by animateFloatAsState(if (checked) 1f else 0f, spring(dampingRatio = 0.55f, stiffness = 600f), label = "check")
+    Box(
+        modifier.size(24.dp).clip(CircleShape).border(1.5.dp, if (checked) Ink.Accent else Ink.Secondary, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.size(24.dp).graphicsLayer { scaleX = fill; scaleY = fill; alpha = fill.coerceIn(0f, 1f) }.clip(CircleShape).background(Ink.Accent), contentAlignment = Alignment.Center) {
+            Glyph(R.drawable.ic_check_line, tint = Color.Black, size = 16.dp)
         }
     }
 }

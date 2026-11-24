@@ -267,6 +267,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         send(Cmd.AddTracks(tracks)); toast("${tracks.size} titres ajoutés à la file")
     }
 
+    fun playAllNext(tracks: List<Track>) {
+        if (tracks.isEmpty()) return
+        send(Cmd.AddTracks(tracks, playNext = true))
+        toast(if (tracks.size == 1) "Sera lu ensuite" else "${tracks.size} titres seront lus ensuite")
+    }
+
+    /** Sélection : tout en favoris, ou tout retiré quand tout y est déjà. */
+    fun toggleFavorites(tracks: List<Track>) = viewModelScope.launch {
+        if (tracks.isEmpty()) return@launch
+        val on = tracks.any { it.id !in favoriteIds.value }
+        tracks.distinctBy { it.id }.forEach { library.setFavorite(it, on) }
+        toast(if (on) "Ajoutés aux favoris" else "Retirés des favoris")
+    }
+
+    fun removeFromPlaylist(rowIds: List<Long>) = viewModelScope.launch {
+        rowIds.forEach { library.removeFromPlaylist(it) }
+        toast(if (rowIds.size == 1) "Retiré de la playlist" else "${rowIds.size} titres retirés")
+    }
+
     /** Lance le titre seul et laisse la radio automatique prolonger la file. */
     fun startRadio(track: Track) {
         send(Cmd.SetAutoplay(true))

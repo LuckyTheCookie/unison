@@ -1,5 +1,8 @@
 package fr.lulu.unison.ui.screens
 
+import androidx.compose.runtime.mutableStateOf
+import fr.lulu.unison.library.LibrarySearch
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -187,18 +190,31 @@ fun LazyListScope.trackPanel(
     numbered: Boolean,
     onMore: (Track) -> Unit,
     subtitleOf: (Track) -> String = { it.artist },
+    /** Positions à montrer (recherche dans la liste) ; un titre touché lance quand même toute la liste. */
+    shown: List<Int>? = null,
+    /** Sélection multiple : un appui long l'ouvre (au lieu du menu du titre). */
+    selection: TrackSelection? = null,
 ) {
-    itemsIndexed(tracks, key = { i, t -> "$i:${t.id}" }) { i, track ->
+    val rows = shown ?: tracks.indices.toList()
+    itemsIndexed(rows, key = { _, i -> "$i:${tracks[i].id}" }) { pos, i ->
+        val track = tracks[i]
+        val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+        val selecting = selection?.active == true
         val shape = when {
-            tracks.size == 1 -> Radius.Panel
-            i == 0 -> androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
-            i == tracks.lastIndex -> androidx.compose.foundation.shape.RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp)
+            rows.size == 1 -> Radius.Panel
+            pos == 0 -> androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+            pos == rows.lastIndex -> androidx.compose.foundation.shape.RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp)
             else -> androidx.compose.foundation.shape.RoundedCornerShape(0.dp)
         }
         Box(Modifier.animateItem().padding(horizontal = 12.dp).clip(shape).background(Ink.Fill)) {
             TrackRow(
                 track,
-                onClick = { vm.play(tracks, i) },
+                onClick = { if (selecting) selection!!.toggle(i) else vm.play(tracks, i) },
+                onLongClick = if (selection == null) ({ onMore(track) }) else ({
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    selection.toggle(i)
+                }),
+                selected = if (selecting) i in selection!!.positions else null,
                 onSwipe = { vm.playNext(track) },
                 index = if (numbered) i + 1 else null,
                 showCover = !numbered,
@@ -221,36 +237,49 @@ fun CollectionScreen(browseId: String, vm: AppViewModel) {
     }
     val snap by vm.snapshot.collectAsStateWithLifecycle()
     val saved by vm.saved.collectAsStateWithLifecycle()
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        TopBar("", onBack = nav.back)
-        LoadBox(load, onRetry = { attempt++ }) { page ->
-            LazyColumn(contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {
-                item {
-                    CollectionHeader(
-                        title = page.title,
-                        subtitle = page.artist,
-                        cover = page.thumbnail,
-                        chips = listOfNotNull(page.subtitle.ifBlank { null }, page.info.ifBlank { null }),
-                        canPlay = page.tracks.isNotEmpty(),
-                        onPlay = { vm.playAll(page.tracks) },
-                        onShuffle = { vm.playAll(page.tracks, shuffle = true) },
-                        onSubtitleClick = page.artistId?.let { id -> { nav.artist(id) } },
-                    ) {
-                        val isSaved = saved.any { it.browseId == browseId }
-                        GlassButton(
-                            null, { vm.toggleSaved(browseId, page) },
-                            icon = if (isSaved) R.drawable.ic_library_fill else R.drawable.ic_library_line,
-                            tint = if (isSaved) Ink.Accent else Ink.Primary,
-                        )
-                        GlassButton(null, { vm.addAllToQueue(page.tracks) }, icon = R.drawable.ic_queue_line, enabled = page.tracks.isNotEmpty())
-                        DownloadAllButton(page.tracks, vm)
+    var query by rememberSaveable(browseId) { mutableStateOf<String?>(null) }
+    val tracks = (load as? Load.Ready)?.value?.tracks.orEmpty()
+    val shown = remember(tracks, query) { query?.let { LibrarySearch.within(it, tracks) } }
+    val selection = rememberTrackSelection()
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+            if (selection.active) SelectionTopBar(selection, shown ?: tracks.indices.toList())
+            else SearchableTopBar(query, { query = it }, "Dans cette liste…", nav.back, canSearch = tracks.size > 1)
+            LoadBox(load, onRetry = { attempt++ }) { page ->
+                LazyColumn(contentPadding = PaddingValues(bottom = LocalBottomInset.current + if (selection.active) 110.dp else 24.dp)) {
+                    if (shown != null) {
+                        if (shown.isEmpty()) item { Notice("Aucun titre", detail = "Rien ne correspond à « $query » ici.", icon = R.drawable.ic_search_line) }
+                        trackPanel(page.tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = page.isAlbum, onMore = nav.trackMenu, shown = shown, selection = selection)
+                        return@LazyColumn
                     }
+                    item {
+                        CollectionHeader(
+                            title = page.title,
+                            subtitle = page.artist,
+                            cover = page.thumbnail,
+                            chips = listOfNotNull(page.subtitle.ifBlank { null }, page.info.ifBlank { null }),
+                            canPlay = page.tracks.isNotEmpty(),
+                            onPlay = { vm.playAll(page.tracks) },
+                            onShuffle = { vm.playAll(page.tracks, shuffle = true) },
+                            onSubtitleClick = page.artistId?.let { id -> { nav.artist(id) } },
+                        ) {
+                            val isSaved = saved.any { it.browseId == browseId }
+                            GlassButton(
+                                null, { vm.toggleSaved(browseId, page) },
+                                icon = if (isSaved) R.drawable.ic_library_fill else R.drawable.ic_library_line,
+                                tint = if (isSaved) Ink.Accent else Ink.Primary,
+                            )
+                            GlassButton(null, { vm.addAllToQueue(page.tracks) }, icon = R.drawable.ic_queue_line, enabled = page.tracks.isNotEmpty())
+                            DownloadAllButton(page.tracks, vm)
+                        }
+                    }
+                    if (page.tracks.isEmpty()) item { Notice("Aucun titre lisible ici", icon = R.drawable.ic_music_line) }
+                    trackPanel(page.tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = page.isAlbum, onMore = nav.trackMenu, selection = selection)
+                    items(page.related, key = { "rel:" + it.title }) { section -> SectionBlock(section, vm) }
                 }
-                if (page.tracks.isEmpty()) item { Notice("Aucun titre lisible ici", icon = R.drawable.ic_music_line) }
-                trackPanel(page.tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = page.isAlbum, onMore = nav.trackMenu)
-                items(page.related, key = { "rel:" + it.title }) { section -> SectionBlock(section, vm) }
             }
         }
+        SelectionActions(selection, tracks, vm)
     }
 }
 

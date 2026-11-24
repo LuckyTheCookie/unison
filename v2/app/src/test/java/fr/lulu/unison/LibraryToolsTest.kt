@@ -22,6 +22,21 @@ class LibraryToolsTest {
     )
 
     @Test
+    fun `recherche dans une liste, positions d'origine, dans l'ordre, doublons compris`() {
+        val list = listOf(
+            t("a", "Été indien", "Joe Dassin"),
+            t("b", "One More Time", "Daft Punk", "Discovery"),
+            t("c", "Time", "Pink Floyd"),
+            t("a", "Été indien", "Joe Dassin"),
+        )
+        assertEquals(listOf(1, 2), LibrarySearch.within("time", list))
+        assertEquals(listOf(0, 3), LibrarySearch.within("ete dassin", list))
+        assertEquals(listOf(1), LibrarySearch.within("discov", list))
+        assertEquals(emptyList<Int>(), LibrarySearch.within("zzz", list))
+        assertEquals(listOf(0, 1, 2, 3), LibrarySearch.within("  ", list))
+    }
+
+    @Test
     fun `la recherche ignore accents et casse et regroupe les apparitions`() {
         val hits = LibrarySearch.search("ete INDIEN", entries)
         assertEquals(listOf("1"), hits.map { it.track.id })

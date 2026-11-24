@@ -1,5 +1,7 @@
 package fr.lulu.unison.ui.screens
 
+import fr.lulu.unison.library.LibrarySearch
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -166,31 +168,44 @@ private fun LocalList(
     emptyDetail: String,
     actions: @Composable () -> Unit = {},
     downloadable: Boolean = false,
+    /** Retirer les titres choisis (par position) : playlist de l'utilisateur seulement. */
+    onRemoveSelected: ((List<Int>) -> Unit)? = null,
     onMore: (index: Int, Track) -> Unit,
 ) {
     val nav = LocalNav.current
     val snap by vm.snapshot.collectAsStateWithLifecycle()
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        TopBar("", onBack = nav.back) { actions() }
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {
-            item {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    cover()
-                    Spacer(Modifier.height(18.dp))
-                    Text(title, style = Type.Hero, color = Ink.Primary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(plural(tracks.size, "titre"), style = Type.Label, color = Ink.Secondary, modifier = Modifier.padding(top = 4.dp))
-                    Row(Modifier.padding(top = 18.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        fr.lulu.unison.ui.components.PrimaryButton("Tout lire", { vm.playAll(tracks) }, icon = R.drawable.ic_play_fill, enabled = tracks.isNotEmpty())
-                        GlassButton(null, { vm.playAll(tracks, shuffle = true) }, icon = R.drawable.ic_shuffle_line, enabled = tracks.isNotEmpty())
-                        GlassButton(null, { vm.addAllToQueue(tracks) }, icon = R.drawable.ic_queue_line, enabled = tracks.isNotEmpty())
-                        if (downloadable) DownloadAllButton(tracks, vm)
+    var query by rememberSaveable(title) { mutableStateOf<String?>(null) }
+    val shown = remember(tracks, query) { query?.let { LibrarySearch.within(it, tracks) } }
+    val selection = rememberTrackSelection()
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+            if (selection.active) SelectionTopBar(selection, shown ?: tracks.indices.toList())
+            else SearchableTopBar(query, { query = it }, "Dans cette liste…", nav.back, canSearch = tracks.size > 1) { actions() }
+            LazyColumn(contentPadding = PaddingValues(bottom = LocalBottomInset.current + if (selection.active) 110.dp else 24.dp)) {
+                if (shown != null) {
+                    if (shown.isEmpty()) item { Notice("Aucun titre", detail = "Rien ne correspond à « $query » ici.", icon = R.drawable.ic_search_line) }
+                    trackPanel(tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = false, onMore = { t -> onMore(tracks.indexOf(t), t) }, shown = shown, selection = selection)
+                    return@LazyColumn
+                }
+                item {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        cover()
+                        Spacer(Modifier.height(18.dp))
+                        Text(title, style = Type.Hero, color = Ink.Primary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(plural(tracks.size, "titre"), style = Type.Label, color = Ink.Secondary, modifier = Modifier.padding(top = 4.dp))
+                        Row(Modifier.padding(top = 18.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            fr.lulu.unison.ui.components.PrimaryButton("Tout lire", { vm.playAll(tracks) }, icon = R.drawable.ic_play_fill, enabled = tracks.isNotEmpty())
+                            GlassButton(null, { vm.playAll(tracks, shuffle = true) }, icon = R.drawable.ic_shuffle_line, enabled = tracks.isNotEmpty())
+                            GlassButton(null, { vm.addAllToQueue(tracks) }, icon = R.drawable.ic_queue_line, enabled = tracks.isNotEmpty())
+                            if (downloadable) DownloadAllButton(tracks, vm)
+                        }
                     }
                 }
+                if (tracks.isEmpty()) item { Notice(emptyTitle, detail = emptyDetail, icon = R.drawable.ic_music_line) }
+                trackPanel(tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = false, onMore = { t -> onMore(tracks.indexOf(t), t) }, selection = selection)
             }
-            if (tracks.isEmpty()) item { Notice(emptyTitle, detail = emptyDetail, icon = R.drawable.ic_music_line) }
-            var index = 0
-            trackPanel(tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = false, onMore = { t -> onMore(tracks.indexOf(t).also { index = it }, t) })
         }
+        SelectionActions(selection, tracks, vm, onRemoveSelected)
     }
 }
 
@@ -236,6 +251,7 @@ fun PlaylistScreen(pid: Long, vm: AppViewModel) {
         tracks, vm,
         emptyTitle = "Playlist vide", emptyDetail = "Ajoute des titres depuis leur menu « ⋮ ».",
         downloadable = true,
+        onRemoveSelected = { positions -> vm.removeFromPlaylist(positions.mapNotNull { rows.getOrNull(it)?.rowId }) },
         actions = {
             IconBtn(R.drawable.ic_edit_line, "Renommer", { renaming = true }, tint = Ink.Secondary)
             IconBtn(R.drawable.ic_delete_line, "Supprimer", { deleting = true }, tint = Ink.Secondary)
