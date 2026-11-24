@@ -23,7 +23,7 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - **Swipe the artwork** to skip to the next track or go back to the previous one.
 - **Add to a playlist from the player**: a "+" button next to the heart adds the current track to a playlist (or a new one) in one tap.
 - **A player that grows out of the mini player**: tap the mini player and it expands to full screen; drag it up or down and it follows your finger step by step (also from the top of the lyrics or the queue), then settles on the side you were heading to or flung it.
-- **Smooth predictive back** for the player (it lowers as you swipe), the "Together" screen and navigation.
+- **Smooth predictive back** for the player (it lowers as you swipe), the "Together" screen and navigation (the page shrinks under your finger and the one below only shows up once you let go).
 - **Organised settings**: a home page with your profile and one entry per topic (Playback, Audio sources, YouTube account, Downloads and storage, Appearance, About), each showing what is currently chosen.
 - **Queue**: play next (or swipe a track to the right), add to queue, reorder, repeat, and an automatic radio that keeps the music going.
 - **Shuffle mode** you can switch on and off like repeat: switching it off puts the remaining tracks back in their original order. The state is shared in a session.
