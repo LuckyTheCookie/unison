@@ -22,7 +22,9 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - **Gapless playback**: the next track is prepared while the current one plays, so changing track never cuts the sound.
 - **Swipe the artwork** to skip to the next track or go back to the previous one.
 - **Add to a playlist from the player**: a "+" button next to the heart adds the current track to a playlist (or a new one) in one tap.
-- **Smooth predictive back** for the player, the "Together" screen and navigation.
+- **A player that grows out of the mini player**: tap the mini player and it expands to full screen; drag it up or down and it follows your finger step by step (also from the top of the lyrics or the queue), then settles on the side you were heading to or flung it.
+- **Smooth predictive back** for the player (it lowers as you swipe), the "Together" screen and navigation.
+- **Organised settings**: a home page with your profile and one entry per topic (Playback, Audio sources, YouTube account, Downloads and storage, Appearance, About), each showing what is currently chosen.
 - **Queue**: play next (or swipe a track to the right), add to queue, reorder, repeat, and an automatic radio that keeps the music going.
 - **Shuffle mode** you can switch on and off like repeat: switching it off puts the remaining tracks back in their original order. The state is shared in a session.
 - **Bass Booster** (Settings > Playback): five levels, applied on the phone with a bass shelf filter and a limiter, so it works on every device and on downloaded tracks.
@@ -33,7 +35,7 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - **Library on the phone**: favourites, playlists, saved albums, followed artists and listening history. It follows you to a new phone through Android backup and device transfer (downloads, caches and imported sources stay on the old one).
 
 ### 🔌 Audio sources
-- YouTube Music is the default source. In Settings > Audio source you can add **another source** from the URL of its addon manifest (HTTP `/manifest.json`, `/search`, `/stream/{id}`), pick it, search directly inside it, or remove it. Unison ships **no source by default**: you are responsible for the legality of the content and for the terms of any source you add.
+- YouTube Music is the default source. In Settings > Audio sources you can add **another source** from the URL of its addon manifest (HTTP `/manifest.json`, `/search`, `/stream/{id}`), pick it, search directly inside it, or remove it. Unison ships **no source by default**: you are responsible for the legality of the content and for the terms of any source you add.
 - A track that the chosen source also has (same title, version, artist and duration) plays from the source; otherwise it falls back to YouTube Music (switchable, and never used in data-saver mode).
 - Playback starts on YouTube Music right away and switches to the source as soon as it answers, even after a slow first request (a cold server gets up to 20 s in the background instead of blocking playback) — shown as "Augmentation de la qualité" while it happens. The next few tracks in the queue are looked up ahead of time so the switch is already done by the time they play. Never happens in a shared session or in data-saver mode.
 - Safe by design: HTTPS only, size and time limits, no private network addresses, no encrypted/DRM or adaptive (HLS/DASH) streams, header allow-list, nothing downloaded from a source is ever executed. A confirmation screen with a health check comes before any source is added.
