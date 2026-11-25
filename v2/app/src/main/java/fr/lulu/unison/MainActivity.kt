@@ -37,7 +37,6 @@ import androidx.compose.ui.unit.IntOffset
 import fr.lulu.unison.ui.components.PlayPauseButton
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.Easing
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -109,6 +108,13 @@ import fr.lulu.unison.ui.LocalReduceMotion
 import fr.lulu.unison.ui.Nav
 import fr.lulu.unison.ui.PredictiveSheet
 import fr.lulu.unison.ui.PlayerSheet
+import fr.lulu.unison.ui.LocalPageBack
+import fr.lulu.unison.ui.PageFrame
+import fr.lulu.unison.ui.PageBackHandler
+import fr.lulu.unison.ui.PageBack
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NamedNavArgument
+import androidx.navigation.NavGraphBuilder
 import fr.lulu.unison.ui.rememberPlayerSheetState
 import fr.lulu.unison.ui.components.Cover
 import fr.lulu.unison.ui.components.Glyph
@@ -202,8 +208,12 @@ private fun Modifier.glassBar(backdrop: Backdrop, shape: Shape): Modifier = this
     )
     .border(0.5.dp, Ink.Hairline, shape)
 
-/** Ne bouge pas pendant la première moitié de la transition, puis avance d'un trait. */
-private val LateEasing = Easing { f -> ((f - 0.45f) / 0.55f).coerceIn(0f, 1f) }
+/** Une page de la navigation, dans son cadre qui suit le geste de retour. */
+private fun NavGraphBuilder.page(
+    route: String,
+    arguments: List<NamedNavArgument> = emptyList(),
+    content: @Composable (NavBackStackEntry) -> Unit,
+) = composable(route, arguments) { entry -> PageFrame(entry) { content(entry) } }
 
 @Composable
 private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit) {
@@ -219,6 +229,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
     var playerOpen by rememberSaveable { mutableStateOf(false) }
     var playerPage by rememberSaveable { mutableStateOf(PlayerPage.Art) }
     val sheet = rememberPlayerSheetState(playerOpen)
+    val pageBack = remember { PageBack() }
     // Le fond de l'app ne bouge plus quand le lecteur le couvre entièrement.
     val playerCovers by remember { derivedStateOf { sheet.progress >= 1f } }
     var togetherOpen by rememberSaveable { mutableStateOf(false) }
@@ -289,7 +300,7 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
     val bottomInset = navBar + 76.dp + if (current != null) 72.dp else 0.dp
     val backdrop = rememberLayerBackdrop()
 
-    CompositionLocalProvider(LocalDownloads provides downloads, LocalReduceMotion provides settings.reduceMotion) {
+    CompositionLocalProvider(LocalDownloads provides downloads, LocalReduceMotion provides settings.reduceMotion, LocalPageBack provides pageBack) {
         Box(Modifier.fillMaxSize().background(Ink.Canvas)) {
             Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
                 KawarpBackground(current?.track?.cover, Modifier.fillMaxSize(), dim = 0.6f, animated = settings.animatedBackground && !playerCovers)
@@ -298,24 +309,19 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
                         navController, startDestination = Tab.Home.route, modifier = Modifier.fillMaxSize(),
                         enterTransition = { fadeIn(tween(Motion.Page, easing = Motion.Ease)) + slideInVertically(tween(Motion.Page, easing = Motion.Ease)) { 24 } },
                         exitTransition = { fadeOut(tween(Motion.Fast)) },
-                        // Retour, y compris prédictif (le geste fait avancer la transition), comme le lecteur : la page
-                        // rétrécit dès le début du geste en restant nette, et celle d'en dessous n'apparaît qu'une fois
-                        // le retour lancé. Les pages n'ont pas de fond : deux pages à demi visibles se mélangeraient.
-                        popEnterTransition = {
-                            fadeIn(tween(Motion.Slow, easing = LateEasing)) +
-                                scaleIn(tween(Motion.Slow, easing = Motion.Ease), initialScale = 0.94f)
-                        },
-                        popExitTransition = {
-                            scaleOut(tween(Motion.Slow, easing = Motion.Ease), targetScale = 0.86f) +
-                                fadeOut(tween(Motion.Slow, easing = LateEasing))
-                        },
+                        // Retour par bouton : la page quitte en rétrécissant, celle d'en dessous revient en grandissant.
+                        // Le geste de retour, lui, est mené par PageBackHandler (plus bas).
+                        popEnterTransition = { fadeIn(tween(Motion.Page, easing = Motion.Ease)) + scaleIn(tween(Motion.Page, easing = Motion.Ease), initialScale = 0.94f) },
+                        popExitTransition = { fadeOut(tween(Motion.Fast)) + scaleOut(tween(Motion.Page, easing = Motion.Ease), targetScale = 0.9f) },
+                        predictivePopEnterTransition = { _ -> fadeIn(tween(Motion.Page, easing = Motion.Ease)) + scaleIn(tween(Motion.Page, easing = Motion.Ease), initialScale = 0.94f) },
+                        predictivePopExitTransition = { _ -> fadeOut(tween(Motion.Fast)) },
                     ) {
-                        composable(Tab.Home.route) { HomeScreen(vm) }
-                        composable(Tab.Search.route) { SearchScreen(vm) }
-                        composable(Tab.Library.route) { LibraryScreen(vm) }
-                        composable("collection/{id}") { entry -> CollectionScreen(entry.arguments?.getString("id").orEmpty(), vm) }
-                        composable("artist/{id}") { entry -> ArtistScreen(entry.arguments?.getString("id").orEmpty(), vm) }
-                        composable(
+                        page(Tab.Home.route) { HomeScreen(vm) }
+                        page(Tab.Search.route) { SearchScreen(vm) }
+                        page(Tab.Library.route) { LibraryScreen(vm) }
+                        page("collection/{id}") { entry -> CollectionScreen(entry.arguments?.getString("id").orEmpty(), vm) }
+                        page("artist/{id}") { entry -> ArtistScreen(entry.arguments?.getString("id").orEmpty(), vm) }
+                        page(
                             "browse/{id}?params={params}&type={type}&title={title}",
                             arguments = listOf(
                                 navArgument("params") { defaultValue = "" },
@@ -331,17 +337,18 @@ private fun App(vm: AppViewModel, incoming: String?, consumeIncoming: () -> Unit
                             )
                             BrowseScreen(ref, args?.getString("title").orEmpty(), vm)
                         }
-                        composable("favorites") { FavoritesScreen(vm) }
-                        composable("history") { HistoryScreen(vm) }
-                        composable("playlist/{pid}") { entry -> PlaylistScreen(entry.arguments?.getString("pid")?.toLongOrNull() ?: 0, vm) }
-                        composable("settings") { SettingsScreen(vm) }
-                        composable("settings/{page}") { entry ->
+                        page("favorites") { FavoritesScreen(vm) }
+                        page("history") { HistoryScreen(vm) }
+                        page("playlist/{pid}") { entry -> PlaylistScreen(entry.arguments?.getString("pid")?.toLongOrNull() ?: 0, vm) }
+                        page("settings") { SettingsScreen(vm) }
+                        page("settings/{page}") { entry ->
                             SettingsPage.of(entry.arguments?.getString("page"))?.let { SettingsPageScreen(it, vm) }
                         }
-                        composable("downloads") { DownloadsScreen(vm) }
-                        composable("import") { ImportScreen(vm) }
-                        composable("library-search") { LibrarySearchScreen(vm) }
+                        page("downloads") { DownloadsScreen(vm) }
+                        page("import") { ImportScreen(vm) }
+                        page("library-search") { LibrarySearchScreen(vm) }
                     }
+                    PageBackHandler(navController, pageBack)
                 }
             }
 
