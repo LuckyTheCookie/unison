@@ -1,5 +1,6 @@
 package fr.lulu.unison.ui.screens
 
+import fr.lulu.unison.library.PlayContext
 import androidx.compose.runtime.mutableStateOf
 import fr.lulu.unison.library.LibrarySearch
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -194,6 +195,8 @@ fun LazyListScope.trackPanel(
     shown: List<Int>? = null,
     /** Sélection multiple : un appui long l'ouvre (au lieu du menu du titre). */
     selection: TrackSelection? = null,
+    /** D'où vient la liste (playlist, album, artiste…), retenu pour l'accueil. */
+    from: PlayContext? = null,
 ) {
     val rows = shown ?: tracks.indices.toList()
     itemsIndexed(rows, key = { _, i -> "$i:${tracks[i].id}" }) { pos, i ->
@@ -209,7 +212,7 @@ fun LazyListScope.trackPanel(
         Box(Modifier.animateItem().padding(horizontal = 12.dp).clip(shape).background(Ink.Fill)) {
             TrackRow(
                 track,
-                onClick = { if (selecting) selection!!.toggle(i) else vm.play(tracks, i) },
+                onClick = { if (selecting) selection!!.toggle(i) else vm.play(tracks, i, from) },
                 onLongClick = if (selection == null) ({ onMore(track) }) else ({
                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     selection.toggle(i)
@@ -246,10 +249,11 @@ fun CollectionScreen(browseId: String, vm: AppViewModel) {
             if (selection.active) SelectionTopBar(selection, shown ?: tracks.indices.toList())
             else SearchableTopBar(query, { query = it }, "Dans cette liste…", nav.back, canSearch = tracks.size > 1)
             LoadBox(load, onRetry = { attempt++ }) { page ->
+                val from = PlayContext.collection(browseId, page.title, page.artist.ifBlank { page.subtitle }, page.thumbnail, page.isAlbum)
                 LazyColumn(contentPadding = PaddingValues(bottom = LocalBottomInset.current + if (selection.active) 110.dp else 24.dp)) {
                     if (shown != null) {
                         if (shown.isEmpty()) item { Notice("Aucun titre", detail = "Rien ne correspond à « $query » ici.", icon = R.drawable.ic_search_line) }
-                        trackPanel(page.tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = page.isAlbum, onMore = nav.trackMenu, shown = shown, selection = selection)
+                        trackPanel(page.tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = page.isAlbum, onMore = nav.trackMenu, shown = shown, selection = selection, from = from)
                         return@LazyColumn
                     }
                     item {
@@ -259,8 +263,8 @@ fun CollectionScreen(browseId: String, vm: AppViewModel) {
                             cover = page.thumbnail,
                             chips = listOfNotNull(page.subtitle.ifBlank { null }, page.info.ifBlank { null }),
                             canPlay = page.tracks.isNotEmpty(),
-                            onPlay = { vm.playAll(page.tracks) },
-                            onShuffle = { vm.playAll(page.tracks, shuffle = true) },
+                            onPlay = { vm.playAll(page.tracks, from = from) },
+                            onShuffle = { vm.playAll(page.tracks, shuffle = true, from = from) },
                             onSubtitleClick = page.artistId?.let { id -> { nav.artist(id) } },
                         ) {
                             val isSaved = saved.any { it.browseId == browseId }
@@ -274,7 +278,7 @@ fun CollectionScreen(browseId: String, vm: AppViewModel) {
                         }
                     }
                     if (page.tracks.isEmpty()) item { Notice("Aucun titre lisible ici", icon = R.drawable.ic_music_line) }
-                    trackPanel(page.tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = page.isAlbum, onMore = nav.trackMenu, selection = selection)
+                    trackPanel(page.tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = page.isAlbum, onMore = nav.trackMenu, selection = selection, from = from)
                     items(page.related, key = { "rel:" + it.title }) { section -> SectionBlock(section, vm) }
                 }
             }
@@ -295,6 +299,7 @@ fun ArtistScreen(browseId: String, vm: AppViewModel) {
     val subscribed by vm.subscribedIds.collectAsStateWithLifecycle()
     Box(Modifier.fillMaxSize()) {
         LoadBox(load, onRetry = { attempt++ }) { page ->
+            val from = PlayContext.artist(browseId, page.name, page.thumbnail)
             LazyColumn(contentPadding = PaddingValues(bottom = LocalBottomInset.current + 24.dp)) {
                 item {
                     Box(Modifier.fillMaxWidth().aspectRatio(1.15f)) {
@@ -315,12 +320,12 @@ fun ArtistScreen(browseId: String, vm: AppViewModel) {
                     if (songs.isNotEmpty() && songs.size == section.items.size && songs.all { it.track.album.isNotBlank() || it.track.durationMs > 0 }) {
                         item(key = "h:" + section.title) {
                             Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                PrimaryButton("Lire", { vm.playAll(songs.map { it.track }) }, icon = R.drawable.ic_play_fill)
+                                PrimaryButton("Lire", { vm.playAll(songs.map { it.track }, from = from) }, icon = R.drawable.ic_play_fill)
                                 GlassButton("Radio", { vm.startRadio(songs.first().track) }, icon = R.drawable.ic_radio_line)
                                 section.more?.let { ref -> GlassButton("Tous les titres", { nav.more(ref, section.title) }) }
                             }
                         }
-                        trackPanel(songs.map { it.track }, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = false, onMore = nav.trackMenu, subtitleOf = { it.album.ifBlank { it.artist } })
+                        trackPanel(songs.map { it.track }, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = false, onMore = nav.trackMenu, subtitleOf = { it.album.ifBlank { it.artist } }, from = from)
                     } else {
                         item(key = "s:" + section.title) { SectionBlock(section, vm) }
                     }

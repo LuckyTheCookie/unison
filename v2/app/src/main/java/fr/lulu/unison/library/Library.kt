@@ -40,7 +40,29 @@ fun Track.toCols() = TrackCols(id, title, artist, album, cover, durationMs, expl
 data class FavoriteRow(@Embedded val track: TrackCols, val addedAt: Long)
 
 @Entity(tableName = "history", primaryKeys = ["trackId"])
-data class HistoryRow(@Embedded val track: TrackCols, val playedAt: Long, val plays: Int)
+data class HistoryRow(
+    @Embedded val track: TrackCols,
+    val playedAt: Long,
+    val plays: Int,
+    /** Chaleur « récent et fréquent » (voir [Frecency]) et sa date. */
+    @ColumnInfo(defaultValue = "0") val heat: Double = 0.0,
+    @ColumnInfo(defaultValue = "0") val heatAt: Long = 0,
+    /** Contexte d'où le titre a été joué la dernière fois ([PlayContext.key]) ; null s'il a été lancé seul. */
+    val ctx: String? = null,
+)
+
+/** Endroit d'où l'on a écouté (playlist, album, artiste…), pour l'accueil. */
+@Entity(tableName = "play_context", primaryKeys = ["key"])
+data class PlayContextRow(
+    val key: String,
+    val kind: String,
+    val title: String,
+    val subtitle: String,
+    val thumbnail: String,
+    val lastAt: Long,
+    val heat: Double,
+    val heatAt: Long,
+)
 
 @Entity(tableName = "playlist")
 data class PlaylistRow(@PrimaryKey(autoGenerate = true) val pid: Long = 0, val name: String, val createdAt: Long)
@@ -131,8 +153,29 @@ interface LibraryDao {
     @Query("SELECT * FROM history WHERE plays >= 2 ORDER BY plays DESC, playedAt DESC LIMIT :limit")
     fun mostPlayed(limit: Int): Flow<List<HistoryRow>>
 
-    @Query("SELECT plays FROM history WHERE trackId = :id")
-    suspend fun plays(id: String): Int?
+    @Query("SELECT * FROM history WHERE trackId = :id")
+    suspend fun historyRow(id: String): HistoryRow?
+
+    @Query("SELECT * FROM history ORDER BY playedAt DESC LIMIT :limit")
+    fun historyRows(limit: Int): Flow<List<HistoryRow>>
+
+    @Query("SELECT * FROM play_context ORDER BY lastAt DESC LIMIT :limit")
+    fun contexts(limit: Int): Flow<List<PlayContextRow>>
+
+    @Query("SELECT * FROM play_context WHERE `key` = :key")
+    suspend fun context(key: String): PlayContextRow?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putContext(row: PlayContextRow)
+
+    @Query("DELETE FROM play_context WHERE `key` = :key")
+    suspend fun deleteContext(key: String)
+
+    @Query("DELETE FROM play_context WHERE `key` NOT IN (SELECT `key` FROM play_context ORDER BY lastAt DESC LIMIT :keep)")
+    suspend fun trimContexts(keep: Int)
+
+    @Query("DELETE FROM play_context")
+    suspend fun clearContexts()
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putHistory(row: HistoryRow)
@@ -141,7 +184,12 @@ interface LibraryDao {
     suspend fun trimHistory(keep: Int)
 
     @Query("DELETE FROM history")
-    suspend fun clearHistory()
+    suspend fun clearHistoryRows()
+
+    @Transaction
+    suspend fun clearHistory() {
+        clearHistoryRows(); clearContexts()
+    }
 
     @Query(
         "SELECT p.pid AS pid, p.name AS name, " +
@@ -198,7 +246,7 @@ interface LibraryDao {
 
     @Transaction
     suspend fun deletePlaylist(pid: Long) {
-        clearPlaylist(pid); deletePlaylistRow(pid)
+        clearPlaylist(pid); deletePlaylistRow(pid); deleteContext("p:$pid")
     }
 
     @Query("SELECT * FROM playlist_track WHERE pid = :pid ORDER BY position")
@@ -272,8 +320,8 @@ interface LibraryDao {
 }
 
 @Database(
-    entities = [FavoriteRow::class, HistoryRow::class, PlaylistRow::class, PlaylistTrackRow::class, SavedRow::class, DownloadRow::class, SubscriptionRow::class],
-    version = 4,
+    entities = [FavoriteRow::class, HistoryRow::class, PlaylistRow::class, PlaylistTrackRow::class, SavedRow::class, DownloadRow::class, SubscriptionRow::class, PlayContextRow::class],
+    version = 5,
     exportSchema = true,
 )
 abstract class LibraryDb : RoomDatabase() {
@@ -315,7 +363,25 @@ object LibraryMigrations {
         }
     }
 
-    val ALL = arrayOf(V1_V2, V2_V3, V3_V4)
+    /**
+     * 2.10 : d'où viennent les écoutes, et une chaleur « récent et fréquent ». La chaleur des titres déjà écoutés
+     * part de leur nombre d'écoutes, datée de la dernière.
+     */
+    val V4_V5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `history` ADD COLUMN `heat` REAL NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `history` ADD COLUMN `heatAt` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `history` ADD COLUMN `ctx` TEXT")
+            db.execSQL("UPDATE `history` SET `heat` = `plays`, `heatAt` = `playedAt`")
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `play_context` (`key` TEXT NOT NULL, `kind` TEXT NOT NULL, `title` TEXT NOT NULL, " +
+                    "`subtitle` TEXT NOT NULL, `thumbnail` TEXT NOT NULL, `lastAt` INTEGER NOT NULL, `heat` REAL NOT NULL, " +
+                    "`heatAt` INTEGER NOT NULL, PRIMARY KEY(`key`))",
+            )
+        }
+    }
+
+    val ALL = arrayOf(V1_V2, V2_V3, V3_V4, V4_V5)
 }
 
 /** Ce dont les abonnements ont besoin de la bibliothèque (une version en mémoire sert aux tests). */
@@ -346,9 +412,30 @@ class Library(context: Context, private val now: () -> Long = System::currentTim
         if (on) dao.addFavorite(FavoriteRow(track.toCols(), now())) else dao.removeFavorite(track.id)
     }
 
-    suspend fun recordPlay(track: Track) {
-        dao.putHistory(HistoryRow(track.toCols(), now(), (dao.plays(track.id) ?: 0) + 1))
+    /** Historique de l'accueil, avec chaleur et contexte. */
+    val historyRows: Flow<List<HistoryRow>> = dao.historyRows(300)
+    /** Endroits écoutés, les plus récents d'abord. */
+    val contexts: Flow<List<PlayContextRow>> = dao.contexts(200)
+
+    /**
+     * Un titre vient d'être écouté, lancé depuis [ctx] (une playlist, un album…), seul (null) ou par la radio
+     * ([PlayContext.RADIO]). Le contexte gagne en chaleur au plus une fois par séance d'écoute.
+     */
+    suspend fun recordPlay(track: Track, ctx: PlayContext? = null, radio: Boolean = false) {
+        val t = now()
+        val old = dao.historyRow(track.id)
+        val key = ctx?.key ?: PlayContext.RADIO.takeIf { radio }
+        dao.putHistory(
+            HistoryRow(
+                track.toCols(), t, (old?.plays ?: 0) + 1,
+                heat = Frecency.bump(old?.heat ?: 0.0, old?.heatAt ?: t, t), heatAt = t, ctx = key,
+            ),
+        )
         dao.trimHistory(500)
+        if (ctx != null) {
+            dao.putContext(Frecency.touch(dao.context(ctx.key), ctx, t))
+            dao.trimContexts(200)
+        }
     }
 
     suspend fun clearHistory() = dao.clearHistory()

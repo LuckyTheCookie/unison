@@ -12,6 +12,8 @@ import androidx.media3.database.StandaloneDatabaseProvider
 import fr.lulu.unison.artists.Subscriptions
 import fr.lulu.unison.importer.Importer
 import fr.lulu.unison.library.Library
+import fr.lulu.unison.library.NowPlayingContext
+import fr.lulu.unison.model.QueueItem
 import fr.lulu.unison.offline.Connectivity
 import fr.lulu.unison.offline.Downloads
 import fr.lulu.unison.lyrics.LyricsRepository
@@ -29,6 +31,7 @@ import fr.lulu.unison.source.YouTubeSource
 import fr.lulu.unison.ui.kawarp.KawarpBlur
 import fr.lulu.unison.update.UpdateManager
 import fr.lulu.unison.youtube.HomeCache
+import fr.lulu.unison.youtube.SectionsCache
 import fr.lulu.unison.youtube.TrackListCache
 import fr.lulu.unison.youtube.MusicCatalog
 import fr.lulu.unison.youtube.YouTubeCatalog
@@ -72,6 +75,7 @@ class AppGraph(app: Application) {
     val catalog: MusicCatalog = YouTubeCatalog(youtube)
     val homeCache = HomeCache(File(app.cacheDir, "home.json"))
     val forYouCache = TrackListCache(File(app.cacheDir, "for-you.json"))
+    val discoverCache = SectionsCache(File(app.cacheDir, "discover.json"))
     /** Sources importées par l'utilisateur (aucune par défaut). */
     val sources = SourceRepository(File(app.filesDir, "sources.json"))
     /** Garde des flux des sources importées, posée sur le client HTTP du lecteur et des téléchargements. */
@@ -86,6 +90,8 @@ class AppGraph(app: Application) {
         shared = { sessions.snapshot.value.shared },
     )
     val library = Library(app)
+    /** D'où vient la file en cours (playlist, album…), pour l'historique et l'accueil. */
+    val nowPlaying = NowPlayingContext(File(app.noBackupFilesDir, "now-playing.json"))
     val lyrics = LyricsRepository(http, File(app.filesDir, "offline/lyrics"))
     val sessions = SessionManager(app, prefs)
     /** Base partagée par le cache de lecture et celui des téléchargements. */
@@ -117,7 +123,11 @@ class AppGraph(app: Application) {
                 if (item == null) return@collectLatest
                 delay(HISTORY_DELAY_MS)
                 val loaded = playback.state.value.loadedUid == item.uid
-                if (loaded && sessions.listenHere.value) scope.launch(Dispatchers.IO) { library.recordPlay(item.track) }
+                if (loaded && sessions.listenHere.value) scope.launch(Dispatchers.IO) {
+                    // Rattaché à la playlist ou à l'album d'où la file a été lancée ; la radio n'est rattachée à rien.
+                    val radio = item.addedBy == QueueItem.AUTO
+                    library.recordPlay(item.track, if (radio) null else nowPlaying.contextOf(item.track.id), radio)
+                }
             }
         }
     }

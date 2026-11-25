@@ -145,6 +145,12 @@ object YtParser {
         root.findAll("playlistPanelVideoRenderer").mapNotNull { panelTrack(it) }
             .filter { it.id != seedId }.distinctBy { it.id }
 
+    /** Page « Similaires » d'un titre (onglet de sa file de lecture), à demander ensuite comme une page. */
+    fun relatedId(root: JsonElement): String? =
+        root.findAll("tabRenderer").firstNotNullOfOrNull { tab ->
+            tab["endpoint"]["browseEndpoint"].string("browseId")?.takeIf { it.startsWith("MPTR") }
+        }
+
     /** Le titre [videoId] lui-même, tel que décrit dans sa file de lecture. */
     fun seed(root: JsonElement, videoId: String): Track? =
         root.findAll("playlistPanelVideoRenderer").mapNotNull { panelTrack(it) }.firstOrNull { it.id == videoId }

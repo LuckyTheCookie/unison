@@ -98,4 +98,43 @@ class LibraryMigrationTest {
         assertEquals("'yt'", fields["sourceId"]!!["defaultValue"]!!.jsonPrimitive.content)
         assertEquals(false, (fields["codec"] as JsonObject)["notNull"]?.jsonPrimitive?.content?.toBoolean() ?: false)
     }
+
+    private fun createSql(version: Int, table: String): String? {
+        val schema = File("schemas/fr.lulu.unison.library.LibraryDb/$version.json")
+        if (!schema.exists()) return null
+        return Json.parseToJsonElement(schema.readText()).jsonObject["database"]!!.jsonObject["entities"]!!.jsonArray
+            .map { it.jsonObject }.first { it["tableName"]!!.jsonPrimitive.content == table }["createSql"]!!.jsonPrimitive.content
+            .replace("\${TABLE_NAME}", table)
+    }
+
+    @Test fun historyKeepsItsRowsAndStartsWarm() {
+        val createV4 = createSql(4, "history")
+        val createV5 = createSql(5, "history")
+        val contextV5 = createSql(5, "play_context")
+        assumeTrue("schémas exportés absents", createV4 != null && createV5 != null && contextV5 != null)
+        DriverManager.getConnection("jdbc:sqlite::memory:").use { old ->
+            old.createStatement().use {
+                it.execute(createV4!!)
+                it.execute(
+                    "INSERT INTO history (playedAt, plays, trackId, title, artist, album, cover, durationMs, explicit) " +
+                        "VALUES (1700000000000, 7, 'khnokW3Mw24', 'Titre', 'Artiste', '', '', 200000, 0)",
+                )
+            }
+            LibraryMigrations.V4_V5.migrate(jdbc(old))
+            DriverManager.getConnection("jdbc:sqlite::memory:").use { fresh ->
+                fresh.createStatement().use { it.execute(createV5!!); it.execute(contextV5!!) }
+                assertEquals("historique migré différent de Room", columns(fresh, "history"), columns(old, "history"))
+                assertEquals("table des contextes différente de Room", columns(fresh, "play_context"), columns(old, "play_context"))
+            }
+            old.createStatement().use { st ->
+                st.executeQuery("SELECT plays, heat, heatAt, ctx FROM history WHERE trackId = 'khnokW3Mw24'").use { rs ->
+                    assertTrue(rs.next())
+                    assertEquals(7, rs.getInt(1))
+                    assertEquals(7.0, rs.getDouble(2), 0.0)
+                    assertEquals(1700000000000L, rs.getLong(3))
+                    assertEquals(null, rs.getString(4))
+                }
+            }
+        }
+    }
 }

@@ -25,6 +25,8 @@ interface MusicCatalog {
     suspend fun radio(videoId: String): List<Track>
     /** Un titre seul à partir de son identifiant (lien partagé). */
     suspend fun track(videoId: String): Track?
+    /** Onglet « Similaires » d'un titre : titres proches, playlists recommandées, artistes similaires. */
+    suspend fun related(videoId: String): List<Section> = emptyList()
 }
 
 /**
@@ -66,6 +68,11 @@ class YouTubeCatalog(private val yt: YouTubeEngine) : MusicCatalog {
         yt.browseRaw(browseId, params).let { parse { YtParser.sections(it) } }.filter { it.items.isNotEmpty() }
 
     override suspend fun radio(videoId: String): List<Track> = yt.nextRaw(videoId, "RDAMVM$videoId").let { parse { YtParser.radio(it, videoId) } }
+
+    override suspend fun related(videoId: String): List<Section> {
+        val id = yt.nextRaw(videoId).let { parse { YtParser.relatedId(it) } } ?: return emptyList()
+        return browse(id, null)
+    }
 
     override suspend fun track(videoId: String): Track? =
         yt.nextRaw(videoId).let { parse { YtParser.seed(it, videoId) } }

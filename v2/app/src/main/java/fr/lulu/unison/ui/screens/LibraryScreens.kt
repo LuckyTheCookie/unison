@@ -1,5 +1,6 @@
 package fr.lulu.unison.ui.screens
 
+import fr.lulu.unison.library.PlayContext
 import fr.lulu.unison.library.LibrarySearch
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.background
@@ -170,6 +171,8 @@ private fun LocalList(
     downloadable: Boolean = false,
     /** Retirer les titres choisis (par position) : playlist de l'utilisateur seulement. */
     onRemoveSelected: ((List<Int>) -> Unit)? = null,
+    /** D'où vient la liste, retenu pour l'accueil ; null pour l'historique. */
+    from: PlayContext? = null,
     onMore: (index: Int, Track) -> Unit,
 ) {
     val nav = LocalNav.current
@@ -184,7 +187,7 @@ private fun LocalList(
             LazyColumn(contentPadding = PaddingValues(bottom = LocalBottomInset.current + if (selection.active) 110.dp else 24.dp)) {
                 if (shown != null) {
                     if (shown.isEmpty()) item { Notice("Aucun titre", detail = "Rien ne correspond à « $query » ici.", icon = R.drawable.ic_search_line) }
-                    trackPanel(tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = false, onMore = { t -> onMore(tracks.indexOf(t), t) }, shown = shown, selection = selection)
+                    trackPanel(tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = false, onMore = { t -> onMore(tracks.indexOf(t), t) }, shown = shown, selection = selection, from = from)
                     return@LazyColumn
                 }
                 item {
@@ -194,15 +197,15 @@ private fun LocalList(
                         Text(title, style = Type.Hero, color = Ink.Primary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(plural(tracks.size, "titre"), style = Type.Label, color = Ink.Secondary, modifier = Modifier.padding(top = 4.dp))
                         Row(Modifier.padding(top = 18.dp, bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            fr.lulu.unison.ui.components.PrimaryButton("Tout lire", { vm.playAll(tracks) }, icon = R.drawable.ic_play_fill, enabled = tracks.isNotEmpty())
-                            GlassButton(null, { vm.playAll(tracks, shuffle = true) }, icon = R.drawable.ic_shuffle_line, enabled = tracks.isNotEmpty())
+                            fr.lulu.unison.ui.components.PrimaryButton("Tout lire", { vm.playAll(tracks, from = from) }, icon = R.drawable.ic_play_fill, enabled = tracks.isNotEmpty())
+                            GlassButton(null, { vm.playAll(tracks, shuffle = true, from = from) }, icon = R.drawable.ic_shuffle_line, enabled = tracks.isNotEmpty())
                             GlassButton(null, { vm.addAllToQueue(tracks) }, icon = R.drawable.ic_queue_line, enabled = tracks.isNotEmpty())
                             if (downloadable) DownloadAllButton(tracks, vm)
                         }
                     }
                 }
                 if (tracks.isEmpty()) item { Notice(emptyTitle, detail = emptyDetail, icon = R.drawable.ic_music_line) }
-                trackPanel(tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = false, onMore = { t -> onMore(tracks.indexOf(t), t) }, selection = selection)
+                trackPanel(tracks, vm, snap.anchor.item?.track?.id, snap.anchor.playing, numbered = false, onMore = { t -> onMore(tracks.indexOf(t), t) }, selection = selection, from = from)
             }
         }
         SelectionActions(selection, tracks, vm, onRemoveSelected)
@@ -217,6 +220,7 @@ fun FavoritesScreen(vm: AppViewModel) {
         "Favoris", { GeneratedCover(R.drawable.ic_heart_fill, FavoritesColors, 180.dp) }, tracks, vm,
         emptyTitle = "Pas encore de favoris", emptyDetail = "Touche le cœur d'un titre pour le retrouver ici.",
         downloadable = true,
+        from = PlayContext.Favorites,
         onMore = { _, t -> nav.trackMenu(t) },
     )
 }
@@ -252,6 +256,7 @@ fun PlaylistScreen(pid: Long, vm: AppViewModel) {
         emptyTitle = "Playlist vide", emptyDetail = "Ajoute des titres depuis leur menu « ⋮ ».",
         downloadable = true,
         onRemoveSelected = { positions -> vm.removeFromPlaylist(positions.mapNotNull { rows.getOrNull(it)?.rowId }) },
+        from = PlayContext.playlist(pid, playlist?.name ?: "Playlist", tracks.firstOrNull()?.cover),
         actions = {
             IconBtn(R.drawable.ic_edit_line, "Renommer", { renaming = true }, tint = Ink.Secondary)
             IconBtn(R.drawable.ic_delete_line, "Supprimer", { deleting = true }, tint = Ink.Secondary)

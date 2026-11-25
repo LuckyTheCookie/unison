@@ -1,5 +1,6 @@
 package fr.lulu.unison.ui.screens
 
+import fr.lulu.unison.library.PlayContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -106,8 +107,8 @@ fun DownloadsScreen(vm: AppViewModel) {
             }
             item {
                 Row(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PrimaryButton("Tout lire", { vm.playAll(ready) }, icon = R.drawable.ic_play_fill, enabled = ready.isNotEmpty())
-                    GlassButton(null, { vm.playAll(ready, shuffle = true) }, icon = R.drawable.ic_shuffle_line, enabled = ready.isNotEmpty())
+                    PrimaryButton("Tout lire", { vm.playAll(ready, from = PlayContext.Downloads) }, icon = R.drawable.ic_play_fill, enabled = ready.isNotEmpty())
+                    GlassButton(null, { vm.playAll(ready, shuffle = true, from = PlayContext.Downloads) }, icon = R.drawable.ic_shuffle_line, enabled = ready.isNotEmpty())
                     if (pending.isNotEmpty()) {
                         GlassButton(
                             if (paused) "Reprendre" else "Pause",
@@ -135,7 +136,7 @@ fun DownloadsScreen(vm: AppViewModel) {
                     val track = row.track.toTrack()
                     TrackRow(
                         track,
-                        onClick = { vm.play(ready, ready.indexOfFirst { it.id == track.id }.coerceAtLeast(0)) },
+                        onClick = { vm.play(ready, ready.indexOfFirst { it.id == track.id }.coerceAtLeast(0), from = PlayContext.Downloads) },
                         current = snap.anchor.item?.track?.id == track.id,
                         playing = snap.anchor.playing,
                         subtitle = listOfNotNull(track.artist, formatOf(row, sources), size(row.totalBytes)).joinToString(" · "),

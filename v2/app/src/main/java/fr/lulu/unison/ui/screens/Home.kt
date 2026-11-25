@@ -21,7 +21,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,15 +32,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import fr.lulu.unison.R
-import fr.lulu.unison.library.DownloadState
+import fr.lulu.unison.library.ContextKind
+import fr.lulu.unison.library.HomeRank
+import fr.lulu.unison.library.PlayContext
+import fr.lulu.unison.library.RewindItem
 import fr.lulu.unison.model.Track
 import fr.lulu.unison.ui.AppViewModel
 import fr.lulu.unison.ui.Load
 import fr.lulu.unison.ui.LocalBottomInset
 import fr.lulu.unison.ui.LocalNav
+import fr.lulu.unison.ui.Nav
 import fr.lulu.unison.ui.components.Avatar
 import fr.lulu.unison.ui.components.Cover
 import fr.lulu.unison.ui.components.Glyph
@@ -73,9 +82,10 @@ private class Shortcut(
 )
 
 /**
- * Accueil centré sur l'utilisateur : ses raccourcis (Mix, plus écoutés, favoris, playlists, albums), ce qu'il
- * réécoute, une sélection « Pour toi » tirée de ses goûts, ses artistes. Les recommandations génériques de
- * YouTube Music ne viennent qu'à la fin, deux sections au plus, sauf pour une bibliothèque encore vide.
+ * Accueil centré sur l'utilisateur : ses raccourcis (Mix, puis ce qu'il écoute en ce moment et souvent), ce qu'il
+ * réécoute, une sélection « Pour toi » tirée de ses goûts, ses artistes, puis « À découvrir » : ce qui ressemble
+ * à ce qu'il écoute. L'accueil générique de YouTube Music ne sert que sans écoutes (deux sections au plus quand
+ * la bibliothèque est déjà fournie).
  */
 @Composable
 fun HomeScreen(vm: AppViewModel) {
@@ -86,41 +96,31 @@ fun HomeScreen(vm: AppViewModel) {
     val mostPlayed by vm.mostPlayed.collectAsStateWithLifecycle()
     val forYou by vm.forYou.collectAsStateWithLifecycle()
     val playlists by vm.playlists.collectAsStateWithLifecycle()
-    val saved by vm.saved.collectAsStateWithLifecycle()
-    val downloads by vm.downloadRows.collectAsStateWithLifecycle()
     val mixing by vm.mixing.collectAsStateWithLifecycle()
     val session by vm.sessionSummary.collectAsStateWithLifecycle()
     val profile by vm.profile.collectAsStateWithLifecycle()
     val artistFeed by vm.artistFeed.collectAsStateWithLifecycle()
+    val discover by vm.discover.collectAsStateWithLifecycle()
     val hello = remember { greeting() }
     val haptics = LocalHapticFeedback.current
 
-    val downloaded = downloads.count { it.state == DownloadState.DONE }
+    val ranked by vm.shortcuts.collectAsStateWithLifecycle()
+    val rewind by vm.rewind.collectAsStateWithLifecycle()
+    // Ordre figé tant qu'on reste sur l'accueil : un raccourci touché ne saute pas sous le doigt. Il est refait
+    // en revenant sur l'écran.
+    val placed = remember { mutableListOf<String>() }
+    var visit by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { placed.clear(); visit++ }
+    val places = remember(ranked, visit) {
+        HomeRank.keepOrder(placed.toList(), ranked.orEmpty()).also { placed.clear(); placed += it.map { c -> c.key } }
+    }
     val shortcuts = buildList {
         add(Shortcut("mix", "Mix", if (mixing) "Préparation…" else "Ta bibliothèque mélangée", onClick = {
             haptics.performHapticFeedback(HapticFeedbackType.Confirm)
             vm.playMix()
         }) { MixCover(mixing) })
-        if (mostPlayed.size >= 5) add(Shortcut("most", "Les plus écoutés", plural(mostPlayed.size, "titre"), onClick = { vm.playAll(mostPlayed) }) {
-            GeneratedCover(R.drawable.ic_sparkles_fill, HistoryColors, TILE)
-        })
-        if (favorites.isNotEmpty()) add(Shortcut("fav", "Favoris", plural(favorites.size, "titre"), onClick = nav.favorites) {
-            GeneratedCover(R.drawable.ic_heart_fill, FavoritesColors, TILE)
-        })
-        if (downloaded > 0) add(Shortcut("dl", "Téléchargements", plural(downloaded, "titre"), onClick = nav.downloads) {
-            GeneratedCover(R.drawable.ic_downloaded_fill, DownloadsColors, TILE)
-        })
-        playlists.take(4).forEach { p ->
-            add(Shortcut("p${p.pid}", p.name, plural(p.count, "titre"), onClick = { nav.playlist(p.pid) }) {
-                if (p.cover.isNullOrBlank()) GeneratedCover(R.drawable.ic_queue_line, PlaylistColors, TILE) else Cover(p.cover, TILE, shape = Radius.Control)
-            })
-        }
-        saved.forEach { s ->
-            add(Shortcut("s${s.browseId}", s.title, s.subtitle.ifBlank { if (s.isAlbum) "Album" else "Playlist" }, onClick = { nav.collection(s.browseId) }) {
-                Cover(s.thumbnail, TILE, shape = Radius.Control)
-            })
-        }
-    }.take(8).let { if (it.size % 2 == 1 && it.size > 1) it.dropLast(1) else it }
+        places.forEach { ctx -> add(Shortcut(ctx.key, ctx.title, ctx.subtitle, onClick = { open(ctx, nav, vm, mostPlayed) }) { PlaceCover(ctx, TILE) }) }
+    }
     // Bibliothèque déjà fournie : les suggestions génériques passent au second plan.
     val personal = history.size >= 5 || favorites.size >= 3 || playlists.isNotEmpty()
 
@@ -159,12 +159,17 @@ fun HomeScreen(vm: AppViewModel) {
             }
         }
 
-        if (history.isNotEmpty()) {
+        if (rewind.isNotEmpty()) {
             item(key = "recent", contentType = "row") {
                 SectionHeader("Réécouter", action = "Historique", onAction = nav.history)
-                val recent = history.take(12)
+                val songs = rewind.filterIsInstance<RewindItem.Song>().map { it.track }
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    items(recent, key = { it.id }) { track -> RecentCard(track, onClick = { vm.play(recent, recent.indexOf(track)) }, onLong = { nav.trackMenu(track) }) }
+                    items(rewind, key = { it.key }) { item ->
+                        when (item) {
+                            is RewindItem.Song -> RecentCard(item.track, onClick = { vm.play(songs, songs.indexOf(item.track)) }, onLong = { nav.trackMenu(item.track) })
+                            is RewindItem.Place -> PlaceCard(item.context, onClick = { open(item.context, nav, vm, mostPlayed) })
+                        }
+                    }
                 }
             }
         }
@@ -185,19 +190,17 @@ fun HomeScreen(vm: AppViewModel) {
             if (feed.popular.size >= 3) item(key = "mine-songs", contentType = "section") { SectionBlock(Section("Titres de tes artistes", feed.popular.map { SongItem(it) }), vm) }
         }
 
-        when (val h = home) {
+        if (personal && discover.isNotEmpty()) {
+            item(key = "discover", contentType = "head") { DiscoverHead() }
+            items(discover, key = { "d:" + it.title }, contentType = { "section" }) { section -> SectionBlock(section, vm) }
+        } else when (val h = home) {
             Load.Loading -> if (!personal) item(key = "loading") { Column { repeat(3) { SkeletonSection() } } }
             is Load.Failed -> if (!personal) item(key = "failed") {
                 Notice("YouTube Music ne répond pas", detail = h.message, icon = R.drawable.ic_wifi_line, action = "Réessayer", onAction = vm::loadHome)
             }
             is Load.Ready -> {
                 val sections = if (personal) h.value.take(2) else h.value
-                if (personal && sections.isNotEmpty()) item(key = "discover", contentType = "head") {
-                    Text(
-                        "À découvrir", style = Type.Caption, color = Ink.Tertiary,
-                        modifier = Modifier.padding(start = 20.dp, top = 30.dp),
-                    )
-                }
+                if (personal && sections.isNotEmpty()) item(key = "discover", contentType = "head") { DiscoverHead() }
                 items(sections, key = { "s:" + it.title }, contentType = { "section" }) { section -> SectionBlock(section, vm) }
             }
         }
@@ -205,8 +208,6 @@ fun HomeScreen(vm: AppViewModel) {
 }
 
 private val TILE = 56.dp
-
-private fun plural(n: Int, word: String) = if (n == 1) "1 $word" else "$n ${word}s"
 
 @Composable
 private fun ShortcutTile(s: Shortcut, modifier: Modifier = Modifier) {
@@ -252,6 +253,55 @@ private fun SessionPill(members: Int, hostName: String, isHost: Boolean, onClick
         )
         Glyph(R.drawable.ic_right_line, tint = Ink.Tertiary, size = 18.dp)
     }
+}
+
+@Composable
+private fun DiscoverHead() {
+    Text("À découvrir", style = Type.Caption, color = Ink.Tertiary, modifier = Modifier.padding(start = 20.dp, top = 30.dp))
+}
+
+/** Ouvre l'endroit d'un raccourci : sa page, ou la lecture directe pour « Les plus écoutés ». */
+private fun open(ctx: PlayContext, nav: Nav, vm: AppViewModel, mostPlayed: List<Track>) {
+    when (ctx.kind) {
+        ContextKind.PLAYLIST -> ctx.id.toLongOrNull()?.let { nav.playlist(it) }
+        ContextKind.ALBUM, ContextKind.YT_PLAYLIST -> nav.collection(ctx.id)
+        ContextKind.ARTIST -> nav.artist(ctx.id)
+        ContextKind.FAVORITES -> nav.favorites()
+        ContextKind.DOWNLOADS -> nav.downloads()
+        ContextKind.MOST_PLAYED -> vm.playAll(mostPlayed, from = PlayContext.MostPlayed)
+    }
+}
+
+/** Pochette d'un endroit : celle de l'album ou de la playlist, ronde pour un artiste, dessinée pour les listes de l'app. */
+@Composable
+private fun PlaceCover(ctx: PlayContext, size: Dp) {
+    when (ctx.kind) {
+        ContextKind.FAVORITES -> GeneratedCover(R.drawable.ic_heart_fill, FavoritesColors, size)
+        ContextKind.MOST_PLAYED -> GeneratedCover(R.drawable.ic_sparkles_fill, HistoryColors, size)
+        ContextKind.DOWNLOADS -> GeneratedCover(R.drawable.ic_downloaded_fill, DownloadsColors, size)
+        ContextKind.PLAYLIST ->
+            if (ctx.thumbnail.isBlank()) GeneratedCover(R.drawable.ic_queue_line, PlaylistColors, size)
+            else Cover(ctx.thumbnail, size, shape = if (size == TILE) Radius.Control else Radius.Item)
+        ContextKind.ARTIST -> Cover(ctx.thumbnail, size, shape = CircleShape)
+        else -> Cover(ctx.thumbnail, size, shape = if (size == TILE) Radius.Control else Radius.Item)
+    }
+}
+
+@Composable
+private fun PlaceCard(ctx: PlayContext, onClick: () -> Unit) {
+    val artist = ctx.kind == ContextKind.ARTIST
+    Column(Modifier.width(124.dp).pressable(onClick = onClick), horizontalAlignment = if (artist) Alignment.CenterHorizontally else Alignment.Start) {
+        PlaceCover(ctx, 124.dp)
+        Spacer(Modifier.height(8.dp))
+        Text(ctx.title, style = Type.Label, color = Ink.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(ctx.subtitle.ifBlank { kindLabel(ctx.kind) }, style = Type.Caption, color = Ink.Tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+private fun kindLabel(kind: String) = when (kind) {
+    ContextKind.ALBUM -> "Album"
+    ContextKind.ARTIST -> "Artiste"
+    else -> "Playlist"
 }
 
 @Composable

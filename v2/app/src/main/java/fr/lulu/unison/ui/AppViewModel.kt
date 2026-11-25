@@ -17,7 +17,12 @@ import fr.lulu.unison.importer.ImportEntry
 import fr.lulu.unison.importer.ImportUi
 import fr.lulu.unison.artists.ArtistFeed
 import fr.lulu.unison.library.DownloadRow
+import fr.lulu.unison.library.ArtistRank
+import fr.lulu.unison.library.Discover
 import fr.lulu.unison.library.ForYou
+import fr.lulu.unison.library.HomeRank
+import fr.lulu.unison.library.PlayContext
+import fr.lulu.unison.library.RewindItem
 import fr.lulu.unison.youtube.YtParser
 import fr.lulu.unison.library.LibraryEntry
 import fr.lulu.unison.library.LibraryHit
@@ -50,7 +55,10 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -160,14 +168,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val forYou: StateFlow<List<Track>> = _forYou.asStateFlow()
 
     private fun loadForYou() = viewModelScope.launch {
+        val now = System.currentTimeMillis()
+        val rows = runCatching { library.historyRows.first() }.getOrDefault(emptyList())
+        val contexts = runCatching { library.contexts.first() }.getOrDefault(emptyList())
+        // Les titres qu'on écoute en ce moment : quand ils changent, la sélection est refaite avant son délai.
+        val hot = HomeRank.seeds(rows, emptyList(), emptyList(), now, hot = 3, limit = 3).map { it.id }
         val cached = graph.forYouCache.read()
         if (cached != null) {
-            _forYou.value = cached.second
-            if (System.currentTimeMillis() - cached.first < FOR_YOU_TTL_MS) return@launch
+            _forYou.value = cached.tracks
+            val same = cached.tag.split(',').count { it in hot } >= minOf(2, hot.size)
+            if (now - cached.savedAt < FOR_YOU_TTL_MS && same) return@launch
         }
-        val most = runCatching { library.mostPlayed.first() }.getOrDefault(emptyList()).take(3)
-        val favs = runCatching { library.favorites.first() }.getOrDefault(emptyList()).shuffled().take(3)
-        val seeds = (most + favs).distinctBy { it.id }.take(5)
+        val favs = runCatching { library.favorites.first() }.getOrDefault(emptyList()).shuffled()
+        val seeds = HomeRank.seeds(rows, contexts, favs.take(1), now).let { s ->
+            if (s.size >= 3) s else (s + favs).distinctBy { it.id }.take(5)
+        }
         if (seeds.isEmpty()) return@launch
         val radios = coroutineScope {
             seeds.map { seed -> async { withTimeoutOrNull(8_000) { runCatching { catalog.radio(seed.id) }.getOrNull() }.orEmpty() } }.awaitAll()
@@ -177,11 +192,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val picks = withContext(Dispatchers.Default) { ForYou.pick(radios, known) }
         if (picks.size >= 6) {
             _forYou.value = picks
-            graph.forYouCache.write(picks)
+            graph.forYouCache.write(picks, tag = hot.joinToString(","))
         }
     }
     val playlists: StateFlow<List<PlaylistSummary>> = library.playlists.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val saved: StateFlow<List<SavedRow>> = library.saved.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    // --- Accueil : ce qu'on écoute ---
+
+    /**
+     * Endroits de la bibliothèque tels qu'ils sont maintenant (nom, nombre de titres), par clé, et l'ordre de
+     * repli pour une bibliothèque qui n'a pas encore d'écoutes : favoris, plus écoutés, playlists, albums
+     * enregistrés, téléchargements.
+     */
+    private val places: Flow<Pair<Map<String, PlayContext>, List<PlayContext>>> = combine(
+        library.playlists, library.saved, library.favorites, library.mostPlayed, library.downloads,
+    ) { lists, saved, favs, most, dls ->
+        val done = dls.count { it.state == DownloadState.DONE }
+        val cold = buildList {
+            if (favs.isNotEmpty()) add(PlayContext.Favorites.copy(subtitle = titles(favs.size)))
+            if (most.size >= 5) add(PlayContext.MostPlayed.copy(subtitle = titles(most.size)))
+            lists.forEach { add(PlayContext.playlist(it.pid, it.name, it.cover, titles(it.count))) }
+            saved.forEach { add(PlayContext.collection(it.browseId, it.title, it.subtitle.ifBlank { if (it.isAlbum) "Album" else "Playlist" }, it.thumbnail, it.isAlbum)) }
+            if (done > 0) add(PlayContext.Downloads.copy(subtitle = titles(done)))
+        }
+        cold.associateBy { it.key } to cold
+    }
+
+    /** Raccourcis du haut de l'accueil, hors Mix : ce qu'on écoute en ce moment et souvent. Null au chargement. */
+    val shortcuts: StateFlow<List<PlayContext>?> = combine(library.contexts, places) { rows, (live, cold) ->
+        // Avec le Mix, un nombre pair de cases.
+        HomeRank.shortcuts(rows, live, cold, System.currentTimeMillis()).let { if (it.size % 2 == 0) it.dropLast(1) else it }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** « Réécouter » : albums, playlists et artistes écoutés, et titres lancés seuls. */
+    val rewind: StateFlow<List<RewindItem>> = combine(library.contexts, places, library.historyRows, shortcuts) { rows, (live, _), history, top ->
+        HomeRank.rewind(rows, live, history, exclude = top.orEmpty().mapTo(HashSet()) { it.key })
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // --- Hors ligne ---
 
@@ -238,19 +285,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * Toucher un titre : seul, on le lance tout de suite (avec ses voisins de liste) ;
      * à plusieurs, on l'ajoute à la file commune plutôt que de couper ce que tout le monde écoute.
      */
-    fun play(tracks: List<Track>, index: Int = 0) {
+    fun play(tracks: List<Track>, index: Int = 0, from: PlayContext? = null) {
         val track = tracks.getOrNull(index) ?: return
         if (snapshot.value.shared && snapshot.value.anchor.item != null) {
             send(Cmd.AddTrack(track)); toast("Ajouté à la file")
-        } else send(Cmd.PlayTracks(tracks, index))
+        } else {
+            launchedFrom(from, tracks)
+            send(Cmd.PlayTracks(tracks, index))
+        }
+    }
+
+    /** Retient d'où vient la file qu'on lance ([from] : playlist, album… ou null), pour l'historique et l'accueil. */
+    private fun launchedFrom(from: PlayContext?, tracks: List<Track>) = viewModelScope.launch {
+        graph.nowPlaying.set(from, tracks.map { it.id })
     }
 
     /**
      * « Tout lire » : remplace la file, même à plusieurs (c'est une action explicite).
      * [shuffle] : bouton « Aléatoire » ; l'aléatoire s'active, l'ordre de la liste reste mémorisé.
      */
-    fun playAll(tracks: List<Track>, shuffle: Boolean = false) {
+    fun playAll(tracks: List<Track>, shuffle: Boolean = false, from: PlayContext? = null) {
         if (tracks.isEmpty()) return
+        launchedFrom(from, tracks)
         send(Cmd.PlayTracks(tracks, 0, shuffle = shuffle))
     }
 
@@ -288,6 +344,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Lance le titre seul et laisse la radio automatique prolonger la file. */
     fun startRadio(track: Track) {
+        launchedFrom(null, listOf(track))
         send(Cmd.SetAutoplay(true))
         send(Cmd.PlayTracks(listOf(track), 0))
     }
@@ -355,7 +412,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun loadArtistFeed() = viewModelScope.launch {
-        _artistFeed.value = runCatching { subscriptions.feed() }.getOrNull()?.takeIf { it.artists.isNotEmpty() }
+        _artistFeed.value = runCatching {
+            val scores = ArtistRank.scores(
+                library.allSubscriptions(), library.historyRows.first(), library.contexts.first(), System.currentTimeMillis(),
+            )
+            subscriptions.feed(scores = scores)
+        }.getOrNull()?.takeIf { it.artists.isNotEmpty() }
     }
 
     fun setPreferMyArtists(on: Boolean) = viewModelScope.launch { graph.prefs.setPreferMyArtists(on) }
@@ -382,10 +444,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _home = MutableStateFlow<Load<List<Section>>>(Load.Loading)
     val home: StateFlow<Load<List<Section>>> = _home.asStateFlow()
 
+    private val _discover = MutableStateFlow<List<Section>>(emptyList())
+    /** « À découvrir » tiré de ce qu'on écoute ; vide sans écoutes (l'accueil de YouTube Music prend alors le relais). */
+    val discover: StateFlow<List<Section>> = _discover.asStateFlow()
+
+    private fun loadDiscover() = viewModelScope.launch {
+        val now = System.currentTimeMillis()
+        val rows = runCatching { library.historyRows.first() }.getOrDefault(emptyList())
+        // Les titres chauds d'artistes différents : trois points de départ variés.
+        val seeds = HomeRank.seeds(rows, emptyList(), emptyList(), now, hot = 8, limit = 8).distinctBy { it.artist.lowercase() }.take(3)
+        if (seeds.isEmpty()) return@launch
+        val tag = seeds.joinToString(",") { it.id }
+        val cached = graph.discoverCache.read()
+        if (cached != null) {
+            _discover.value = cached.sections
+            val same = cached.tag.split(',').count { id -> seeds.any { it.id == id } } >= minOf(2, seeds.size)
+            if (now - cached.savedAt < FOR_YOU_TTL_MS && same) return@launch
+        }
+        val pages = coroutineScope {
+            seeds.map { seed -> async { withTimeoutOrNull(10_000) { runCatching { catalog.related(seed.id) }.getOrNull() }.orEmpty() } }.awaitAll()
+        }
+        if (pages.all { it.isEmpty() }) return@launch
+        val known = rows.mapTo(HashSet()) { it.track.trackId } + favoriteIds.value + _forYou.value.map { it.id }
+        val followed = runCatching { library.allSubscriptions() }.getOrDefault(emptyList()).mapTo(HashSet()) { it.browseId }
+        val sections = withContext(Dispatchers.Default) {
+            Discover.build(seeds.zip(pages) { t, p -> Discover.Seed(t, p) }, known, followed)
+        }
+        if (sections.isNotEmpty()) {
+            _discover.value = sections
+            graph.discoverCache.write(sections, tag)
+        }
+    }
+
     fun loadHome() {
         // « Réessayer » recharge aussi « Tes artistes », resté vide si l'app a démarré sans réseau.
         loadArtistFeed()
         loadForYou()
+        loadDiscover()
         viewModelScope.launch {
             // Le dernier accueil reçu s'affiche tout de suite ; le nouveau le remplace dès qu'il arrive.
             if (_home.value !is Load.Ready) _home.value = graph.homeCache.read()?.let { Load.Ready(it) } ?: Load.Loading
@@ -733,3 +828,5 @@ sealed interface YouTubeSignIn {
     /** L'adresse à usage unique est prête : on l'ouvre pour récupérer la session YouTube. */
     data class OpenSession(val account: String, val url: String) : YouTubeSignIn
 }
+
+private fun titles(n: Int) = if (n == 1) "1 titre" else "$n titres"

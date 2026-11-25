@@ -3,6 +3,7 @@ package fr.lulu.unison.artists
 import android.util.Log
 import fr.lulu.unison.importer.ImportEntry
 import fr.lulu.unison.importer.ImportMatch
+import fr.lulu.unison.library.ArtistRank
 import fr.lulu.unison.library.SubscriptionStore
 import fr.lulu.unison.library.SubscriptionRow
 import fr.lulu.unison.model.Track
@@ -99,11 +100,15 @@ class Subscriptions(
         return Cached(nowMs(), tracks, releases).also { pages[browseId] = it }
     }
 
-    /** Fil de l'accueil : quelques artistes suivis (les plus récents d'abord, puis au hasard). */
-    suspend fun feed(maxArtists: Int = 8): ArtistFeed = coroutineScope {
-        val all = library.allSubscriptions()
-        if (all.isEmpty()) return@coroutineScope ArtistFeed(emptyList(), emptyList(), emptyList())
-        val chosen = (all.take(3) + all.drop(3).shuffled()).take(maxArtists)
+    /**
+     * Fil de l'accueil : les artistes suivis qu'on écoute le plus ([scores], voir [ArtistRank]) d'abord, puis
+     * quelques autres au hasard. Sans écoute, les plus récemment suivis.
+     */
+    suspend fun feed(maxArtists: Int = 8, scores: Map<String, Double> = emptyMap()): ArtistFeed = coroutineScope {
+        val subs = library.allSubscriptions()
+        if (subs.isEmpty()) return@coroutineScope ArtistFeed(emptyList(), emptyList(), emptyList())
+        val all = ArtistRank.order(subs, scores)
+        val chosen = ArtistRank.pick(subs, scores, maxArtists)
         val gate = Semaphore(3)
         val pages = chosen.map { a -> async { gate.withPermit { runCatching { a to page(a.browseId) }.getOrNull() } } }.awaitAll().filterNotNull()
         // Deux titres populaires par artiste, à tour de rôle.
