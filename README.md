@@ -28,7 +28,12 @@ A YouTube Music player with a shared queue, offline downloads and word-by-word l
 - **Queue**: play next (or swipe a track to the right), add to queue, reorder, repeat, and an automatic radio that keeps the music going.
 - **Shuffle mode** you can switch on and off like repeat: switching it off puts the remaining tracks back in their original order. The state is shared in a session.
 - **Bass Booster** (Settings > Playback): five levels, applied on the phone with a bass shelf filter and a limiter, so it works on every device and on downloaded tracks.
-- **A home made for you**: shortcut tiles (Mix, most played, favourites, downloads, playlists, albums), "Listen again", "For you" picks drawn from what you play most, your artists. Generic YouTube Music suggestions come last.
+- **A home made for you**, all computed on the phone from what you actually listen to (a score that adds up plays and halves every week):
+  - shortcut tiles: the Mix, then the playlists, albums, artists and lists you play now and often, newest first (they stay put while you are on the screen);
+  - "Listen again": albums, playlists and artists you played, plus tracks you started on their own;
+  - "For you": tracks close to what you listen to right now;
+  - your artists, ordered by how much you play them;
+  - "To discover": tracks close to your current favourites and artists similar to them, taken from YouTube Music's "Related" pages, without anything you already know. Generic YouTube Music suggestions only show up while there is no listening history yet.
 - **Mix and library search**: one tap plays a shuffle of your favourites, playlists, saved albums and downloads; search finds any track in your library.
 - **Search inside a list**: the magnifier at the top of a playlist, album, favourites or history filters its tracks as you type; a tapped result plays the whole list from there.
 - **Multi-select**: long-press a track in a list to select several, then play them, play them next, add them to the queue, a playlist or your favourites, download them, or remove them from your playlist.
